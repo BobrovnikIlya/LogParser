@@ -1,0 +1,1038 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Анализатор Proxy Логов</title>
+    <style>
+        * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    line-height: 1.6;
+    color: #333;
+    background-color: #f4f4f4;
+    padding: 20px;
+}
+
+/* Theme variables */
+:root {
+    --bg: #f2f5f9;
+    --card: #ffffff;
+    --text: #213043;
+    --muted: #5c6b7a;
+    --border: #dbe3ec;
+    --accent: #0056a6;         /* nlb.by-like deep blue */
+    --accent-hover: #004987;
+    --table-hover: #eef3f8;
+    --header-border: #e1e8f0;
+}
+
+body.dark {
+    --bg: #0e141b;
+    --card: #121a24;
+    --text: #e6edf3;
+    --muted: #93a1b3;
+    --border: #273242;
+    --accent: #2b73c4;
+    --accent-hover: #2361a6;
+    --table-hover: #0f1a25;
+    --header-border: #1c2734;
+}
+
+body { background-color: var(--bg); color: var(--text); }
+.container { background: var(--card); }
+label { color: var(--muted); }
+input, select, button { border: 1px solid var(--border); }
+th, td { border-bottom: 1px solid var(--border); }
+th { background-color: var(--accent); }
+th:hover { background-color: var(--accent-hover); }
+tr:hover { background-color: var(--table-hover); }
+header { border-bottom: 2px solid var(--header-border); }
+
+/* NLB-like buttons: pill, uppercase, subtle shadow */
+button {
+    background: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    border-radius: 9999px;
+    padding: 10px 16px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+button:hover { background: var(--accent-hover); transform: translateY(-1px); }
+button:active { transform: translateY(0); }
+button.secondary { background: #6b7a8a; }
+button.secondary:hover { background: #5e6c7c; }
+
+/* Headings style to echo nlb.by */
+h1 { text-transform: uppercase; letter-spacing: .04em; }
+
+.container {
+    max-width: 1600px;
+    margin: 0 auto;
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+header {
+    text-align: center;
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 2px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+h1 {
+    color: #2c3e50;
+    margin-bottom: 10px;
+}
+
+.filters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
+    padding: 20px;
+    background: var(--table-hover);
+    border-radius: 6px;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    backdrop-filter: saturate(120%) blur(2px);
+}
+
+.filter-group {
+    display: flex;
+    flex-direction: column;
+}
+
+label {
+    font-weight: 600;
+    margin-bottom: 5px;
+    color: #495057;
+}
+
+input, select, button {
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+button {
+    background: #007bff;
+    color: white;
+    border: none;
+    cursor: pointer;
+    transition: background 0.3s;
+    margin-top: 25px;
+}
+
+button:hover {
+    background: #0056b3;
+}
+
+button.secondary {
+    background: #6c757d;
+}
+
+button.secondary:hover {
+    background: #5a6268;
+}
+
+.stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin: 20px 0;
+}
+
+.stat-card {
+    background: white;
+    padding: 15px;
+    border-radius: 6px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    text-align: center;
+    transition: transform 0.2s;
+}
+
+.stat-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.stat-number {
+    font-size: 24px;
+    font-weight: bold;
+    color: #007bff;
+}
+
+.stat-label {
+    color: #6c757d;
+    font-size: 14px;
+}
+
+.charts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin: 20px 0;
+}
+
+.chart-container {
+    background: white;
+    padding: 15px;
+    border-radius: 6px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    height: 300px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+    background: white;
+}
+
+th, td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #ddd;
+}
+
+th {
+    background-color: #007bff;
+    color: white;
+    position: sticky;
+    top: 0;
+    cursor: pointer;
+}
+
+th:hover {
+    background-color: #0069d9;
+}
+
+tr:hover {
+    background-color: #f8f9fa;
+}
+
+.status-200 { color: #28a745; }
+.status-300 { color: #17a2b8; }
+.status-400 { color: #ffc107; }
+.status-500 { color: #dc3545; }
+
+.pagination {
+    display: flex;
+    justify-content: center;
+    margin-top: 20px;
+    gap: 10px;
+}
+
+.pagination button {
+    padding: 8px 16px;
+    margin-top: 0;
+}
+
+.loading {
+    text-align: center;
+    padding: 40px;
+    color: #6c757d;
+}
+
+.notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 15px 20px;
+    border-radius: 4px;
+    color: white;
+    background: #dc3545;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+    display: none;
+    z-index: 1000;
+}
+
+.export-buttons {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+/* Compact file input and number input in header */
+.export-buttons input[type="file"],
+.export-buttons input[type="number"] {
+    padding: 6px 8px;
+    font-size: 13px;
+    height: 36px;
+    background: var(--card);
+    color: var(--text);
+}
+
+.export-buttons label {
+    font-size: 13px;
+    color: #495057;
+}
+
+/* Progress bar polish */
+#importProgress { margin-top: 10px; }
+#importBar { transition: width 0.3s ease; }
+
+/* Better spacing within filters */
+.filters .filter-group input,
+.filters .filter-group select {
+    width: 100%;
+    background: var(--card);
+    color: var(--text);
+}
+
+/* Pagination spacing */
+.pagination span { align-self: center; color: #495057; }
+
+@media (max-width: 1024px) {
+    .charts {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    .filters {
+        grid-template-columns: 1fr;
+    }
+    
+    table {
+        font-size: 14px;
+    }
+    
+    th, td {
+        padding: 8px;
+    }
+
+    header {
+        flex-direction: column;
+        text-align: center;
+    }
+}
+    </style>
+</head>
+<body>
+    <div class="notification" id="notification"></div>
+    
+    <div class="container">
+        <header>
+            <div>
+                <h1>📊 Анализатор Proxy Логов</h1>
+                <p>Мониторинг и анализ запросов через proxy-сервер</p>
+            </div>
+            <div class="export-buttons">
+                <span style="color:#b85c00;font-size:13px;margin-left:8px;">Для загрузки логов используйте скрипт <b>logs/load_logs.php</b> в консоли сервера.</span>
+                <button onclick="checkCacheStatus()">Статус кэша</button>
+                <button onclick="loadStatsFromCache()">Отчет из кэша</button>
+                <button onclick="exportData('csv')">Экспорт CSV</button>
+                <button onclick="exportData('json')">Экспорт JSON</button>
+                <button onclick="clearCache()">Очистить кэш</button>
+                <button onclick="showTopUrls()">Топ 100 URL</button>
+                <button onclick="showTopUsers()">Топ 10 пользователей</button>
+            </div>
+        </header>
+
+        <div class="filters">
+            <div class="filter-group">
+                <label for="dateFrom">Дата с:</label>
+                <input type="datetime-local" id="dateFrom">
+            </div>
+            
+            <div class="filter-group">
+                <label for="dateTo">Дата по:</label>
+                <input type="datetime-local" id="dateTo">
+            </div>
+            
+            <div class="filter-group">
+                <label for="clientIp">IP клиента:</label>
+                <input type="text" id="clientIp" placeholder="172.22.7.60">
+            </div>
+            
+            <div class="filter-group">
+                <label for="username">Пользователь:</label>
+                <input type="text" id="username" placeholder="user1">
+            </div>
+            
+            <div class="filter-group">
+                <label for="status">Статус:</label>
+                <select id="status">
+                    <option value="">Все</option>
+                    <option value="200">200 OK</option>
+                    <option value="403">403 Forbidden</option>
+                    <option value="404">404 Not Found</option>
+                    <option value="407">407 Proxy Auth Required</option>
+                </select>
+            </div>
+            
+            <div class="filter-group">
+                <label for="action">Действие:</label>
+                <select id="action">
+                    <option value="">Все</option>
+                    <option value="TCP_DENIED">TCP_DENIED</option>
+                    <option value="TCP_MISS">TCP_MISS</option>
+                    <option value="TCP_HIT">TCP_HIT</option>
+                    <option value="TCP_REFRESH">TCP_REFRESH</option>
+                </select>
+            </div>
+            
+            <div class="filter-group">
+                <label for="search">Поиск по URL:</label>
+                <input type="text" id="search" placeholder="Введите часть URL">
+            </div>
+            
+            <button onclick="loadData()">Применить фильтры</button>
+            <button onclick="clearFilters()" class="secondary">Очистить</button>
+        </div>
+
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <div class="stat-number" id="totalRequests">0</div>
+                <div class="stat-label">Всего запросов</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="errorRequests">0</div>
+                <div class="stat-label">Ошибочных запросов</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="avgResponseTime">0</div>
+                <div class="stat-label">Среднее время (мс)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="uniqueIps">0</div>
+                <div class="stat-label">Уникальных IP</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="totalTraffic">0</div>
+                <div class="stat-label">Всего трафика (МБ)</div>
+            </div>
+        </div>
+
+        <div class="charts">
+            <div class="chart-container">
+                <canvas id="statusChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <canvas id="timeChart"></canvas>
+            </div>
+        </div>
+
+        <div id="loading" class="loading">Загрузка данных...</div>
+        <div id="importProgress" style="display:none;margin-top:10px;">
+            <div style="background:#eee;border-radius:4px;overflow:hidden;height:12px;">
+                <div id="importBar" style="background:#28a745;width:0%;height:12px;"></div>
+            </div>
+            <div id="importInfo" style="font-size:12px;color:#6c757d;margin-top:6px;">Импорт: 0%</div>
+        </div>
+        
+        <table id="logsTable" style="display: none;">
+            <thead>
+                <tr>
+                    <th onclick="sortTable('log_time')">Время ⬍</th>
+                    <th onclick="sortTable('client_ip')">IP клиента</th>
+                    <th onclick="sortTable('username')">Пользователь</th>
+                    <th onclick="sortTable('http_status')">Статус</th>
+                    <th onclick="sortTable('proxy_action')">Действие</th>
+                    <th onclick="sortTable('response_time')">Время ответа</th>
+                    <th onclick="sortTable('response_size')">Размер</th>
+                    <th>URL</th>
+                    <th onclick="sortTable('content_type')">Тип контента</th>
+                </tr>
+            </thead>
+            <tbody id="logsBody"></tbody>
+        </table>
+
+        <div class="pagination" id="pagination" style="display: none;">
+            <button onclick="changePage(-1)">← Назад</button>
+            <span id="pageInfo">Страница 1 из 1</span>
+            <button onclick="changePage(1)">Вперед →</button>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        let currentPage = 1;
+        const itemsPerPage = 20;
+        let totalPages = 1;
+        let allLogs = [];
+        let currentSort = { column: 'log_time', direction: 'desc' };
+        let statusChart, timeChart;
+
+        function showNotification(message, isError = true) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.style.background = isError ? '#dc3545' : '#28a745';
+            notification.style.display = 'block';
+            
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 3000);
+        }
+
+        function getFilters() {
+            return {
+                dateFrom: document.getElementById('dateFrom').value,
+                dateTo: document.getElementById('dateTo').value,
+                clientIp: document.getElementById('clientIp').value,
+                username: document.getElementById('username').value,
+                status: document.getElementById('status').value,
+                action: document.getElementById('action').value,
+                search: document.getElementById('search').value
+            };
+        }
+
+        async function loadData(page = 1) {
+            const filters = getFilters();
+            const loading = document.getElementById('loading');
+            const table = document.getElementById('logsTable');
+            const pagination = document.getElementById('pagination');
+            
+            loading.style.display = 'block';
+            table.style.display = 'none';
+            pagination.style.display = 'none';
+
+            try {
+                const formData = new FormData();
+                formData.append('action', 'get_logs');
+                formData.append('page', page);
+                formData.append('filters', JSON.stringify(filters));
+                const response = await fetch('proxy_api.php', { method: 'POST', body: formData });
+                const data = await response.json();
+                
+                if (data.success) {
+                    allLogs = data.logs;
+                    displayLogs(data.logs);
+                    updateStats(data.stats);
+                    updatePagination(data.totalPages, page);
+                    createCharts(data.stats);
+                } else {
+                    showNotification('Ошибка загрузки данных: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Ошибка:', error);
+                showNotification('Произошла ошибка при загрузке данных');
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        function displayLogs(logs) {
+            const tbody = document.getElementById('logsBody');
+            tbody.innerHTML = '';
+
+            logs.forEach(log => {
+                const row = document.createElement('tr');
+                
+                const statusClass = `status-${Math.floor(log.http_status / 100) * 100}`;
+                const sizeKB = (log.response_size / 1024).toFixed(2);
+                
+                row.innerHTML = `
+                    <td>${log.log_time}</td>
+                    <td>${log.client_ip}</td>
+                    <td>${log.username || ''}</td>
+                    <td class="${statusClass}">${log.http_status}</td>
+                    <td>${log.proxy_action}</td>
+                    <td>${log.response_time}мс</td>
+                    <td>${sizeKB} КБ</td>
+                    <td title="${log.url}">${log.url.substring(0, 50)}${log.url.length > 50 ? '...' : ''}</td>
+                    <td>${log.content_type}</td>
+                `;
+                
+                tbody.appendChild(row);
+            });
+
+            document.getElementById('logsTable').style.display = 'table';
+        }
+
+        function updateStats(stats) {
+            document.getElementById('totalRequests').textContent = stats.total_requests.toLocaleString();
+            document.getElementById('errorRequests').textContent = stats.error_requests.toLocaleString();
+            document.getElementById('avgResponseTime').textContent = stats.avg_response_time.toLocaleString();
+            document.getElementById('uniqueIps').textContent = stats.unique_ips.toLocaleString();
+            document.getElementById('totalTraffic').textContent = stats.total_traffic_mb.toLocaleString();
+        }
+
+        function updatePagination(tp, cp) {
+            totalPages = tp;
+            currentPage = cp;
+            
+            const pagination = document.getElementById('pagination');
+            const pageInfo = document.getElementById('pageInfo');
+            
+            if (tp > 1) {
+                pageInfo.textContent = `Страница ${cp} из ${tp}`;
+                pagination.style.display = 'flex';
+            } else {
+                pagination.style.display = 'none';
+            }
+        }
+
+        function changePage(direction) {
+            const newPage = currentPage + direction;
+            if (newPage >= 1 && newPage <= totalPages) {
+                currentPage = newPage;
+                loadData(currentPage);
+            }
+        }
+
+        function clearFilters() {
+            document.getElementById('dateFrom').value = '';
+            document.getElementById('dateTo').value = '';
+            document.getElementById('clientIp').value = '';
+            document.getElementById('username').value = '';
+            document.getElementById('status').value = '';
+            document.getElementById('action').value = '';
+            document.getElementById('search').value = '';
+            loadData();
+        }
+
+        function sortTable(column) {
+            if (currentSort.column === column) {
+                currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSort.column = column;
+                currentSort.direction = 'asc';
+            }
+            
+            allLogs.sort((a, b) => {
+                let valueA = a[column];
+                let valueB = b[column];
+                
+                if (column === 'log_time') {
+                    valueA = new Date(valueA);
+                    valueB = new Date(valueB);
+                }
+                
+                if (valueA < valueB) return currentSort.direction === 'asc' ? -1 : 1;
+                if (valueA > valueB) return currentSort.direction === 'asc' ? 1 : -1;
+                return 0;
+            });
+            
+            displayLogs(allLogs);
+            
+            // Обновляем стрелки сортировки в заголовках
+            document.querySelectorAll('th').forEach(th => {
+                th.innerHTML = th.innerHTML.replace(' ⬍', '').replace(' ⬏', '').replace(' ⬎', '');
+            });
+            
+            const currentHeader = document.querySelector(`th[onclick="sortTable('${column}')"]`);
+            if (currentHeader) {
+                currentHeader.innerHTML += currentSort.direction === 'asc' ? ' ⬏' : ' ⬎';
+            }
+        }
+
+        function createCharts(stats) {
+            const statusCtx = document.getElementById('statusChart').getContext('2d');
+            const timeCtx = document.getElementById('timeChart').getContext('2d');
+            
+            // Уничтожаем предыдущие графики, если они существуют
+            if (statusChart) statusChart.destroy();
+            if (timeChart) timeChart.destroy();
+            
+            // График распределения статусов
+            statusChart = new Chart(statusCtx, {
+                type: 'pie',
+                data: {
+                    labels: Object.keys(stats.status_distribution),
+                    datasets: [{
+                        data: Object.values(stats.status_distribution),
+                        backgroundColor: [
+                            '#28a745', '#17a2b8', '#ffc107', '#ff6b07', '#dc3545', '#6f42c1'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Распределение HTTP статусов'
+                        },
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+            
+            // График запросов по времени
+            timeChart = new Chart(timeCtx, {
+                type: 'line',
+                data: {
+                    labels: Array(24).fill(0).map((_, i) => `${i}:00`),
+                    datasets: [{
+                        label: 'Запросов в час',
+                        data: stats.hourly_distribution,
+                        borderColor: '#007bff',
+                        backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                        fill: true,
+                        tension: 0.3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Запросы по времени суток'
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        function exportData(format) {
+            if (allLogs.length === 0) {
+                showNotification('Нет данных для экспорта');
+                return;
+            }
+            
+            let content;
+            let mimeType;
+            let filename;
+            
+            if (format === 'csv') {
+                const headers = ['Время', 'IP клиента', 'Статус', 'Действие', 'Время ответа (мс)', 'Размер (КБ)', 'URL', 'Тип контента'];
+                const rows = allLogs.map(log => [
+                    log.log_time,
+                    log.client_ip,
+                    log.http_status,
+                    log.proxy_action,
+                    log.response_time,
+                    (log.response_size / 1024).toFixed(2),
+                    `"${log.url}"`,
+                    log.content_type
+                ]);
+                
+                content = [headers, ...rows].map(row => row.join(',')).join('\n');
+                mimeType = 'text/csv';
+                filename = 'proxy-logs.csv';
+            } else {
+                content = JSON.stringify(allLogs, null, 2);
+                mimeType = 'application/json';
+                filename = 'proxy-logs.json';
+            }
+            
+            const blob = new Blob([content], { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            showNotification(`Данные экспортированы в формате ${format.toUpperCase()}`, false);
+        }
+
+        async function importLogs() {
+            try {
+                const formData = new FormData();
+                formData.append('action', 'import_logs');
+                // formData.append('filePath', '../log.txt'); // если нужен путь на сервере
+                // formData.append('dedup', '1');
+                const batchSizeEl = document.getElementById('batchSize');
+                const dedupEl = document.getElementById('dedupToggle');
+                const bs = parseInt(batchSizeEl?.value || '0', 10);
+                if (!isNaN(bs) && bs > 0) formData.append('batchSize', String(bs));
+                if (dedupEl) formData.append('dedup', dedupEl.checked ? '1' : '0');
+
+                // Create a unique importId for progress tracking
+                const importId = 'imp_' + Math.random().toString(36).slice(2);
+                formData.append('importId', importId);
+                startProgressPolling(importId);
+                const response = await fetch('proxy_api.php', { method: 'POST', body: formData });
+                const data = await response.json();
+                if (data.success) {
+                    const s = data.import || {};
+                    showNotification(`Импорт завершен: вставлено ${s.inserted || 0}, пропущено ${s.skipped || 0}, ошибок ${s.errors || 0}, батчей ${s.batches || 0}`, false);
+                    // Перезагружаем таблицу с текущими фильтрами/страницей
+                    await loadData(currentPage);
+                } else {
+                    showNotification('Ошибка импорта: ' + (data.error || 'Неизвестно'));
+                }
+            } catch (e) {
+                console.error(e);
+                showNotification('Произошла ошибка при импорте');
+            } finally {
+                stopProgressPolling();
+                updateProgress(0, '');
+            }
+        }
+
+        let progressTimer = null;
+        async function pollProgress(importId) {
+            try {
+                const fd = new FormData();
+                fd.append('action', 'import_status');
+                fd.append('importId', importId);
+                const r = await fetch('proxy_api.php', { method: 'POST', body: fd });
+                const d = await r.json();
+                if (d && d.progress) {
+                    const p = d.progress;
+                    const total = Math.max(1, p.total_lines || 0);
+                    const done = (p.inserted || 0) + (p.skipped || 0) + (p.errors || 0);
+                    const percent = Math.min(100, Math.floor(100 * done / total));
+                    updateProgress(percent, `Вставлено ${p.inserted||0}, пропущено ${p.skipped||0}, ошибок ${p.errors||0}`);
+                    if (d.done) {
+                        stopProgressPolling();
+                    }
+                }
+            } catch {}
+        }
+
+        function startProgressPolling(importId) {
+            const wrap = document.getElementById('importProgress');
+            if (wrap) wrap.style.display = 'block';
+            updateProgress(0, 'Старт импорта');
+            stopProgressPolling();
+            progressTimer = setInterval(() => pollProgress(importId), 800);
+        }
+
+        function stopProgressPolling() {
+            if (progressTimer) {
+                clearInterval(progressTimer);
+                progressTimer = null;
+            }
+        }
+
+        function updateProgress(percent, text) {
+            const bar = document.getElementById('importBar');
+            const info = document.getElementById('importInfo');
+            if (bar) bar.style.width = (percent||0) + '%';
+            if (info) info.textContent = text ? `Импорт: ${percent}% — ${text}` : '';
+            const wrap = document.getElementById('importProgress');
+            if (wrap) wrap.style.display = percent > 0 || (text && text.length) ? 'block' : 'none';
+        }
+
+        async function checkLimits() {
+            try {
+                const fd = new FormData();
+                fd.append('action', 'env_info');
+                const r = await fetch('proxy_api.php', { method: 'POST', body: fd });
+                const d = await r.json();
+                if (d.success && d.limits) {
+                    const l = d.limits;
+                    showNotification(`upload_max_filesize=${l.upload_max_filesize}, post_max_size=${l.post_max_size}, max_execution_time=${l.max_execution_time}, memory_limit=${l.memory_limit}`, false);
+                } else {
+                    showNotification('Не удалось получить лимиты');
+                }
+            } catch (e) {
+                console.error(e);
+                showNotification('Ошибка при получении лимитов');
+            }
+        }
+
+        async function checkCacheStatus() {
+            try {
+                const filters = getFilters();
+                const fd = new FormData();
+                fd.append('action', 'cache_status');
+                fd.append('filters', JSON.stringify(filters));
+                const r = await fetch('proxy_api.php', { method: 'POST', body: fd });
+                const d = await r.json();
+                if (d.success) {
+                    const age = d.age_seconds != null ? `${d.age_seconds}s` : 'n/a';
+                    showNotification(`Кэш ${d.exists ? 'есть' : 'нет'}, возраст: ${age}`, !d.exists);
+                } else {
+                    showNotification('Ошибка статуса кэша');
+                }
+            } catch (e) {
+                console.error(e);
+                showNotification('Ошибка запроса статуса кэша');
+            }
+        }
+
+        async function loadStatsFromCache() {
+            try {
+                const filters = getFilters();
+                const fd = new FormData();
+                fd.append('action', 'report_from_cache');
+                fd.append('filters', JSON.stringify(filters));
+                const r = await fetch('proxy_api.php', { method: 'POST', body: fd });
+                const d = await r.json();
+                if (d.success) {
+                    updateStats(d.stats);
+                    createCharts(d.stats);
+                    showNotification('Статистика загружена из кэша', false);
+                } else {
+                    showNotification(d.error || 'Кэш не найден');
+                }
+            } catch (e) {
+                console.error(e);
+                showNotification('Ошибка загрузки из кэша');
+            }
+        }
+
+        async function clearCache() {
+            try {
+                const fd = new FormData();
+                fd.append('action', 'clear_cache');
+                const r = await fetch('proxy_api.php', { method: 'POST', body: fd });
+                const d = await r.json();
+                if (d.success) {
+                    showNotification('Кэш успешно очищен', false);
+                } else {
+                    showNotification('Ошибка очистки кэша: ' + (d.error || 'Неизвестно'));
+                }
+            } catch (e) {
+                showNotification('Ошибка очистки кэша');
+            }
+        }
+
+        function showTopUrls() {
+            fetch('proxy_api.php', {
+                method: 'POST',
+                body: new URLSearchParams({ action: 'top_urls' })
+            })
+            .then(r => r.json())
+            .then(d => {
+                if (d.success && Array.isArray(d.data)) {
+                    let html = '<div id="topUrlsModal" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.35);z-index:2000;display:flex;align-items:center;justify-content:center;">';
+                    html += '<div id="topUrlsModalContent" style="background:#fff;max-width:900px;width:90vw;max-height:80vh;overflow:auto;padding:24px 18px 18px 18px;border-radius:8px;box-shadow:0 4px 24px rgba(0,0,0,0.18);position:relative;">';
+                    html += '<button onclick="document.getElementById(\'topUrlsModal\').remove();window.removeEventListener(\'keydown\',topUrlsEscClose)" style="position:absolute;top:10px;right:14px;font-size:20px;background:none;border:none;cursor:pointer;">×</button>';
+                    html += '<h2 style="margin-bottom:18px;">Топ 100 самых посещаемых URL</h2>';
+                    html += '<table style="width:100%;border-collapse:collapse;font-size:15px;">';
+                    html += '<thead><tr><th style="text-align:left;padding:8px 6px;border-bottom:1px solid #ddd;">URL</th><th style="text-align:right;padding:8px 6px;border-bottom:1px solid #ddd;">Запросов</th></tr></thead><tbody>';
+                    d.data.forEach(row => {
+                        html += `<tr><td style="padding:6px 6px;word-break:break-all;">${row.url}</td><td style="padding:6px 6px;text-align:right;">${row.cnt}</td></tr>`;
+                    });
+                    html += '</tbody></table></div></div>';
+                    document.body.insertAdjacentHTML('beforeend', html);
+                    // Закрытие по клику вне окна
+                    document.getElementById('topUrlsModal').addEventListener('mousedown', function(e) {
+                        if (e.target === this) {
+                            this.remove();
+                            window.removeEventListener('keydown', topUrlsEscClose);
+                        }
+                    });
+                    // Закрытие по Esc
+                    window.addEventListener('keydown', topUrlsEscClose);
+                    function topUrlsEscClose(ev) {
+                        if (ev.key === 'Escape') {
+                            const m = document.getElementById('topUrlsModal');
+                            if (m) m.remove();
+                            window.removeEventListener('keydown', topUrlsEscClose);
+                        }
+                    }
+                } else {
+                    showNotification('Ошибка загрузки топ-100 URL');
+                }
+            })
+            .catch(() => showNotification('Ошибка запроса топ-100 URL'));
+        }
+
+        function showTopUsers() {
+            fetch('proxy_api.php', {
+                method: 'POST',
+                body: new URLSearchParams({ action: 'top_users' })
+            })
+            .then(r => r.json())
+            .then(d => {
+                if (d.success && Array.isArray(d.data)) {
+                    let html = '<div id="topUsersModal" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.35);z-index:2000;display:flex;align-items:center;justify-content:center;">';
+                    html += '<div id="topUsersModalContent" style="background:#fff;max-width:500px;width:90vw;max-height:80vh;overflow:auto;padding:24px 18px 18px 18px;border-radius:8px;box-shadow:0 4px 24px rgba(0,0,0,0.18);position:relative;">';
+                    html += '<button onclick="document.getElementById(\'topUsersModal\').remove();window.removeEventListener(\'keydown\',topUsersEscClose)" style="position:absolute;top:10px;right:14px;font-size:20px;background:none;border:none;cursor:pointer;">×</button>';
+                    html += '<h2 style="margin-bottom:18px;">Топ 10 пользователей</h2>';
+                    html += '<table style="width:100%;border-collapse:collapse;font-size:15px;">';
+                    html += '<thead><tr><th style="text-align:left;padding:8px 6px;border-bottom:1px solid #ddd;">Пользователь</th><th style="text-align:right;padding:8px 6px;border-bottom:1px solid #ddd;">Запросов</th></tr></thead><tbody>';
+                    d.data.forEach(row => {
+                        html += `<tr><td style=\"padding:6px 6px;word-break:break-all;\">${row.username}</td><td style=\"padding:6px 6px;text-align:right;\">${row.cnt}</td></tr>`;
+                    });
+                    html += '</tbody></table></div></div>';
+                    document.body.insertAdjacentHTML('beforeend', html);
+                    // Закрытие по клику вне окна
+                    document.getElementById('topUsersModal').addEventListener('mousedown', function(e) {
+                        if (e.target === this) {
+                            this.remove();
+                            window.removeEventListener('keydown', topUsersEscClose);
+                        }
+                    });
+                    // Закрытие по Esc
+                    window.addEventListener('keydown', topUsersEscClose);
+                    function topUsersEscClose(ev) {
+                        if (ev.key === 'Escape') {
+                            const m = document.getElementById('topUsersModal');
+                            if (m) m.remove();
+                            window.removeEventListener('keydown', topUsersEscClose);
+                        }
+                    }
+                } else {
+                    showNotification('Ошибка загрузки топ-10 пользователей');
+                }
+            })
+            .catch(() => showNotification('Ошибка запроса топ-10 пользователей'));
+        }
+
+        function applySavedTheme() {
+            const saved = localStorage.getItem('theme') || '';
+            if (saved === 'dark') {
+                document.body.classList.add('dark');
+            } else {
+                document.body.classList.remove('dark');
+            }
+        }
+
+        function toggleTheme() {
+            document.body.classList.toggle('dark');
+            localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+        }
+
+        // Загрузка данных при старте
+        document.addEventListener('DOMContentLoaded', function() {
+            applySavedTheme();
+            // Получаем диапазон дат из БД
+            fetch('proxy_api.php', {
+                method: 'POST',
+                body: new URLSearchParams({ action: 'get_date_range' })
+            })
+            .then(r => r.json())
+            .then(d => {
+                if (d.success && d.min && d.max) {
+                    const from = document.getElementById('dateFrom');
+                    const to = document.getElementById('dateTo');
+                    from.min = d.min.slice(0, 16);
+                    from.max = d.max.slice(0, 16);
+                    to.min = d.min.slice(0, 16);
+                    to.max = d.max.slice(0, 16);
+                    from.value = d.min.slice(0, 16);
+                    to.value = d.max.slice(0, 16);
+                } else {
+                    // fallback: последние 24 часа
+                    const now = new Date();
+                    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+                    document.getElementById('dateFrom').value = yesterday.toISOString().slice(0, 16);
+                    document.getElementById('dateTo').value = now.toISOString().slice(0, 16);
+                }
+                loadData();
+            })
+            .catch(() => {
+                // fallback: последние 24 часа
+                const now = new Date();
+                const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+                document.getElementById('dateFrom').value = yesterday.toISOString().slice(0, 16);
+                document.getElementById('dateTo').value = now.toISOString().slice(0, 16);
+                loadData();
+            });
+        });
+    </script>
+</body>
+</html>

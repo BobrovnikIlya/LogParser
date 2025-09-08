@@ -20,17 +20,17 @@ public class Log {
     @Column(name = "url")
     private String url;
 
-    @Column(name = "user")
-    private String user;
+    @Column(name = "person")
+    private String person;
 
     // Конструкторы, геттеры и сеттеры
     public Log() {}
 
-    public Log(LocalDateTime time, String ip, String url, String user) {
+    public Log(LocalDateTime time, String ip, String url, String person) {
         this.time = time;
         this.ip = ip;
         this.url = url;
-        this.user = user;
+        this.person = person;
     }
 
     public Long getId() { return id; }
@@ -40,7 +40,7 @@ public class Log {
     public void setIp(String ip) { this.ip = ip; }
     public String getUrl() { return url; }
     public void setUrl(String url) { this.url = url; }
-    public String getUser() { return user; }
-    public void setUser(String user) { this.user = user; }
+    public String getUser() { return person; }
+    public void setUser(String user) { this.person = user; }
 }
 
