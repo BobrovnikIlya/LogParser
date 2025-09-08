@@ -125,21 +125,25 @@ public class DataLoader implements CommandLineRunner {
                             String ip = m.group(2);
                             int statusCode = Integer.parseInt(m.group(4)); // TCP_TUNNEL/200 -> 200
                             String url = m.group(5);
-                            String username = m.group(6).equals("-") ? null : m.group(6);
+                            String username = m.group(6);
+                            if (username != null) {
+                                username = username.trim();
+                                if (!username.isEmpty() && !username.equals("-")) {
+                                    LocalDateTime dateTime = convertTimestamp(rawTime);
+                                    if (dateTime != null) {
+                                        ps.setObject(1, dateTime);
+                                        ps.setString(2, ip);
+                                        ps.setString(3, username);
+                                        ps.setString(4, url);
+                                        ps.setInt(5, statusCode);
+                                        ps.addBatch();
+                                        count++;
 
-                            LocalDateTime dateTime = convertTimestamp(rawTime);
-                            if (dateTime != null) {
-                                ps.setObject(1, dateTime);
-                                ps.setString(2, ip);
-                                ps.setString(3, username);
-                                ps.setString(4, url);
-                                ps.setInt(5, statusCode);
-                                ps.addBatch();
-                                count++;
-
-                                if (count % batchSize == 0) {
-                                    ps.executeBatch();
-                                    System.out.println("Записано " + count + " записей.");
+                                        if (count % batchSize == 0) {
+                                            ps.executeBatch();
+                                            System.out.println("Записано " + count + " записей.");
+                                        }
+                                    }
                                 }
                             }
                         } else {
