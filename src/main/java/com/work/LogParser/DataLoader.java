@@ -1,6 +1,9 @@
 package com.work.LogParser;
 
 import java.io.*;
+import java.nio.charset.Charset;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.sql.*;
@@ -38,32 +41,37 @@ public class DataLoader implements CommandLineRunner {
 
     @Override
     public void run(String... args) throws Exception {
-        long startTime = System.currentTimeMillis();
 
-        if (shouldParseLogs()) {
+
+        //if (shouldParseLogs()) {
             System.out.println("Необходимо парсить логи и очистить таблицу.");
-            //clearLogsTable(); // очистка таблицы
+            clearLogsTable(); // очистка таблицы
             parseToPostgres(); // парсинг по новой
-        } else {
-            System.out.println("Логи актуальны, парсить не нужно.");
-        }
+//        } else {
+//            System.out.println("Логи актуальны, парсить не нужно.");
+//        }
 
-        long endTime = System.currentTimeMillis();
-        System.out.println("Время выполнения: " + (endTime - startTime)/1000 + " с");
+
     }
 
 
-    private static void parseToPostgres() {
+    private static void parseToPostgres() throws IOException {
         int count = 0;
         int batchSize = 10000;
+        int skipped = 0; // счётчик битых строк
+        long startTime = System.currentTimeMillis();
 
-        try (BufferedReader br = Files.newBufferedReader(LOG_FILE, StandardCharsets.UTF_8);
+        CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.IGNORE)
+                .onUnmappableCharacter(CodingErrorAction.IGNORE);
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(
+                new FileInputStream(LOG_FILE.toFile()), decoder));
              Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
 
             // Создаем таблицу, если не существует
             try (Statement st = conn.createStatement()) {
                 String createTableSQL = "CREATE TABLE IF NOT EXISTS logs (" +
-                        "id SERIAL PRIMARY KEY," +
+                        "id BIGSERIAL PRIMARY KEY," +
                         "time TIMESTAMP," +
                         "ip TEXT," +
                         "url TEXT," +
@@ -72,35 +80,42 @@ public class DataLoader implements CommandLineRunner {
                 st.execute(createTableSQL);
             }
 
-            String insertSQL = "INSERT INTO logs (time, ip, url, person) VALUES (?, ?, ?, ?)";
+            String insertSQL = "INSERT INTO logs (time, ip, url, username) VALUES (?, ?, ?, ?)";
             try (PreparedStatement ps = conn.prepareStatement(insertSQL)) {
 
                 String line;
                 while ((line = br.readLine()) != null) {
-                    Matcher m = LOG_PATTERN.matcher(line);
-                    if (m.find()) {
-                        String rawTime = m.group(1);
-                        String ip = m.group(2);
-                        String url = m.group(3);
-                        String username = m.group(4);
+                    try {
+                        Matcher m = LOG_PATTERN.matcher(line);
+                        if (m.find()) {
+                            String rawTime = m.group(1);
+                            String ip = m.group(2);
+                            String url = m.group(3);
+                            String username = m.group(4);
 
-                        if (!"-".equals(username)) {
-                            LocalDateTime dateTime = convertTimestamp(rawTime);
-                            if (dateTime != null) {
-                                ps.setObject(1, dateTime); // PostgreSQL корректно принимает LocalDateTime
-                                ps.setString(2, ip);
-                                ps.setString(3, url);
-                                ps.setString(4, username);
+                            if (username != null && !username.trim().isEmpty() && !username.trim().equals("-")) {
+                                LocalDateTime dateTime = convertTimestamp(rawTime);
+                                if (dateTime != null) {
+                                    ps.setObject(1, dateTime); // PostgreSQL корректно принимает LocalDateTime
+                                    ps.setString(2, ip);
+                                    ps.setString(3, url);
+                                    ps.setString(4, username);
 
-                                ps.addBatch();
-                                count++;
+                                    ps.addBatch();
+                                    count++;
 
-                                if (count % batchSize == 0) {
-                                    ps.executeBatch();
-                                    System.out.println("Записано " + count + " записей.");
+                                    if (count % batchSize == 0) {
+                                        ps.executeBatch();
+                                        System.out.println("Записано " + count + " записей.");
+                                        if(count > 1000000) break;
+                                    }
                                 }
                             }
+                        }else {
+                            skipped++; // строка не подошла под regex
                         }
+                    } catch (Exception e) {
+                        skipped++; // строка битая
                     }
                 }
 
@@ -110,6 +125,9 @@ public class DataLoader implements CommandLineRunner {
                 }
 
                 System.out.println("Данные успешно записаны в PostgreSQL.");
+                System.out.println("Пропущено битых/некорректных строк: " + skipped);
+                long endTime = System.currentTimeMillis();
+                System.out.println("Время выполнения: " + (endTime - startTime)/1000 + " с");
             }
 
         } catch (IOException | SQLException e) {
@@ -145,12 +163,13 @@ public class DataLoader implements CommandLineRunner {
     private static void clearLogsTable() {
         try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD);
              Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate("DELETE FROM logs");
-            System.out.println("Таблица успешно очищена.");
+            stmt.executeUpdate("DROP TABLE IF EXISTS logs");
+            System.out.println("Таблица logs успешно удалена.");
         } catch (SQLException e) {
             e.printStackTrace();
         }
     }
+
 
     // Конвертация строки из логов в LocalDateTime
     private static LocalDateTime convertTimestamp(String rawTimestamp) {
@@ -170,8 +189,5 @@ public class DataLoader implements CommandLineRunner {
             return null; // на случай ошибки
         }
     }
-
-
-
 
 }
