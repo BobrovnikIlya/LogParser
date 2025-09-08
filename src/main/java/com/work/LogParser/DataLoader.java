@@ -1,10 +1,7 @@
 package com.work.LogParser;
 
 import java.io.*;
-import java.nio.charset.Charset;
-import java.nio.charset.CharsetDecoder;
-import java.nio.charset.CodingErrorAction;
-import java.nio.charset.StandardCharsets;
+import java.nio.charset.*;
 import java.nio.file.*;
 import java.sql.*;
 import java.time.Instant;
@@ -28,8 +25,13 @@ public class DataLoader implements CommandLineRunner {
     private static final Path LOG_FILE = Paths.get("D:/logs/access.log");   // Входной лог
 
     private static final Pattern LOG_PATTERN = Pattern.compile(
-            "^(\\d+\\.\\d+)\\s+\\d+\\s+(\\d+\\.\\d+\\.\\d+\\.\\d+)\\s+\\S+\\s+\\d+\\s+\\S+\\s+(\\S+)\\s+(\\S+)"
+            "^(\\d+\\.\\d+)\\s+\\d+\\s+" +                 // timestamp + неизвестное число
+                    "(\\d+\\.\\d+\\.\\d+\\.\\d+)\\s+" +           // IP клиента
+                    "(\\S+)/(\\d+)\\s+\\d+\\s+\\S+\\s+" +         // TCP_TUNNEL/200 -> тип запроса и код
+                    "(\\S+)\\s+" +                                 // URL или host:port
+                    "(\\S+|-)"                                     // username или '-'
     );
+
 
     private static final DateTimeFormatter DATE_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
@@ -51,71 +53,71 @@ public class DataLoader implements CommandLineRunner {
 //            System.out.println("Логи актуальны, парсить не нужно.");
 //        }
 
-
     }
-
 
     private static void parseToPostgres() throws IOException {
         int count = 0;
         int batchSize = 10000;
         int skipped = 0; // счётчик битых строк
-        long startTime = System.currentTimeMillis();
+        String rawTime = "";
+        String ip = "";
+        float startTime = System.currentTimeMillis();
+        CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder();
 
-        CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.IGNORE)
-                .onUnmappableCharacter(CodingErrorAction.IGNORE);
-        try (BufferedReader br = new BufferedReader(new InputStreamReader(
-                new FileInputStream(LOG_FILE.toFile()), decoder));
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(LOG_FILE.toFile()), decoder));
              Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
 
-            // Создаем таблицу, если не существует
+            // Создание таблицы с новым полем status_code
             try (Statement st = conn.createStatement()) {
                 String createTableSQL = "CREATE TABLE IF NOT EXISTS logs (" +
                         "id BIGSERIAL PRIMARY KEY," +
                         "time TIMESTAMP," +
                         "ip TEXT," +
+                        "username TEXT," +
                         "url TEXT," +
-                        "username TEXT" +
+                        "status_code INT" +
                         ")";
                 st.execute(createTableSQL);
             }
 
-            String insertSQL = "INSERT INTO logs (time, ip, url, username) VALUES (?, ?, ?, ?)";
+            String insertSQL = "INSERT INTO logs (time, ip, username, url, status_code) VALUES (?, ?, ?, ?, ?)";
             try (PreparedStatement ps = conn.prepareStatement(insertSQL)) {
-
                 String line;
                 while ((line = br.readLine()) != null) {
                     try {
                         Matcher m = LOG_PATTERN.matcher(line);
                         if (m.find()) {
-                            String rawTime = m.group(1);
-                            String ip = m.group(2);
-                            String url = m.group(3);
-                            String username = m.group(4);
+                            rawTime = m.group(1);
+                            ip = m.group(2);
+                            String requestType = m.group(3); // TCP_TUNNEL / TCP_DENIED
+                            int statusCode = Integer.parseInt(m.group(4)); // 200, 403, 407...
+                            String url = m.group(5);
+                            String username = m.group(6);
 
-                            if (username != null && !username.trim().isEmpty() && !username.trim().equals("-")) {
-                                LocalDateTime dateTime = convertTimestamp(rawTime);
-                                if (dateTime != null) {
-                                    ps.setObject(1, dateTime); // PostgreSQL корректно принимает LocalDateTime
-                                    ps.setString(2, ip);
-                                    ps.setString(3, url);
-                                    ps.setString(4, username);
+                            LocalDateTime dateTime = convertTimestamp(rawTime);
+                            if (dateTime != null) {
+                                ps.setObject(1, dateTime);
+                                ps.setString(2, ip);
+                                ps.setString(3, username.equals("-") ? null : username);
+                                ps.setString(4, url);
+                                ps.setInt(5, statusCode);
+                                ps.addBatch();
+                                count++;
 
-                                    ps.addBatch();
-                                    count++;
-
-                                    if (count % batchSize == 0) {
-                                        ps.executeBatch();
-                                        System.out.println("Записано " + count + " записей.");
-                                        if(count > 1000000) break;
-                                    }
+                                if (count % batchSize == 0) {
+                                    ps.executeBatch();
+                                    System.out.println("Записано " + count + " записей.");
+                                    //if(count > 660000) break; // ограничитель
                                 }
                             }
-                        }else {
-                            skipped++; // строка не подошла под regex
+
+                        } else {
+                            skipped++;
+                            System.out.println("Номер записи " + count + " не подошла под regex: " + rawTime + " user " + ip);
                         }
                     } catch (Exception e) {
-                        skipped++; // строка битая
+                        skipped++;
+                        System.out.println("Номер записи " + count + " ошибка парсинга: " + rawTime + " user " + ip);
                     }
                 }
 
@@ -126,7 +128,7 @@ public class DataLoader implements CommandLineRunner {
 
                 System.out.println("Данные успешно записаны в PostgreSQL.");
                 System.out.println("Пропущено битых/некорректных строк: " + skipped);
-                long endTime = System.currentTimeMillis();
+                float endTime = System.currentTimeMillis();
                 System.out.println("Время выполнения: " + (endTime - startTime)/1000 + " с");
             }
 
