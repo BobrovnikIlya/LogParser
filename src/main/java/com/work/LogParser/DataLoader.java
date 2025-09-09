@@ -57,7 +57,7 @@ public class DataLoader implements CommandLineRunner {
 //        }
 
     }
-
+//
 
     private static void parseToPostgres() throws IOException {
         int count = 0;
