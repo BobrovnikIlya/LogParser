@@ -61,7 +61,7 @@ public class DataLoader implements CommandLineRunner {
 
     private static void parseToPostgres() throws IOException {
         int count = 0;
-        int batchSize = 5000;
+        int batchSize = 10000;
         int skipped = 0; // счётчик битых строк
         double startTime = System.currentTimeMillis();
         CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
@@ -75,13 +75,19 @@ public class DataLoader implements CommandLineRunner {
             try (Statement st = conn.createStatement()) {
                 String createTableSQL = "CREATE TABLE IF NOT EXISTS logs (" +
                         "id BIGSERIAL PRIMARY KEY," +
-                        "time TIMESTAMP," +
+                        "time TIMESTAMP NOT NULL," +
                         "ip TEXT," +
                         "username TEXT," +
                         "url TEXT," +
                         "status_code INT" +
                         ")";
                 st.execute(createTableSQL);
+
+                // Индексы для ускорения выборок
+                st.execute("CREATE INDEX IF NOT EXISTS idx_logs_time ON logs(time)");
+                st.execute("CREATE INDEX IF NOT EXISTS idx_logs_username ON logs(username)");
+                st.execute("CREATE INDEX IF NOT EXISTS idx_logs_status_code ON logs(status_code)");
+                st.execute("CREATE INDEX IF NOT EXISTS idx_logs_user_status_time ON logs(username, status_code, time)");
             }
 
             String insertSQL = "INSERT INTO logs (time, ip, username, url, status_code) VALUES (?, ?, ?, ?, ?)";
