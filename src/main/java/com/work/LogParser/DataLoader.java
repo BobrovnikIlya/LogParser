@@ -61,8 +61,8 @@ public class DataLoader implements CommandLineRunner {
 
     private static void parseToPostgres() throws IOException {
         int count = 0;
-        int batchSize = 5000;
-        int skipped = 0; // счётчик битых строк
+        int batchSize = 10000;
+        int skipped = 0;
         double startTime = System.currentTimeMillis();
         CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.IGNORE)
@@ -71,9 +71,9 @@ public class DataLoader implements CommandLineRunner {
         try (BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(LOG_FILE.toFile()), decoder));
              Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
 
-            // Создание таблицы с новым полем status_code
             try (Statement st = conn.createStatement()) {
-                String createTableSQL = "CREATE TABLE IF NOT EXISTS logs (" +
+                // Создаём UNLOGGED таблицу (быстрее вставка)
+                String createTableSQL = "CREATE UNLOGGED TABLE IF NOT EXISTS logs (" +
                         "id BIGSERIAL PRIMARY KEY," +
                         "time TIMESTAMP NOT NULL," +
                         "ip TEXT," +
@@ -83,11 +83,17 @@ public class DataLoader implements CommandLineRunner {
                         ")";
                 st.execute(createTableSQL);
 
-                // Индексы для ускорения выборок
+                // Индексы
                 st.execute("CREATE INDEX IF NOT EXISTS idx_logs_time ON logs(time)");
                 st.execute("CREATE INDEX IF NOT EXISTS idx_logs_username ON logs(username)");
                 st.execute("CREATE INDEX IF NOT EXISTS idx_logs_status_code ON logs(status_code)");
                 st.execute("CREATE INDEX IF NOT EXISTS idx_logs_user_status_time ON logs(username, status_code, time)");
+
+                // Материализованное представление (агрегация по дням)
+                String createMV = "CREATE MATERIALIZED VIEW IF NOT EXISTS logs_daily_stats AS " +
+                        "SELECT username, status_code, date_trunc('day', time) as day, count(*) as cnt " +
+                        "FROM logs GROUP BY username, status_code, day";
+                st.execute(createMV);
             }
 
             String insertSQL = "INSERT INTO logs (time, ip, username, url, status_code) VALUES (?, ?, ?, ?, ?)";
@@ -97,12 +103,12 @@ public class DataLoader implements CommandLineRunner {
                     try {
                         Matcher m = LOG_PATTERN.matcher(line);
                         if (m.find()) {
-                            // логика разбора полей
                             String rawTime = m.group(1);
                             String ip = m.group(2);
-                            int statusCode = Integer.parseInt(m.group(4)); // TCP_TUNNEL/200 -> 200
+                            int statusCode = Integer.parseInt(m.group(4));
                             String url = m.group(5);
                             String username = m.group(6);
+
                             if (username != null) {
                                 username = username.trim();
                                 if (!username.isEmpty() && !username.equals("-")) {
@@ -119,18 +125,18 @@ public class DataLoader implements CommandLineRunner {
                                         if (count % batchSize == 0) {
                                             ps.executeBatch();
                                             System.out.println("Записано " + count + " записей.");
-                                            if(count >= 500000) break; // ограничитель
+                                            //if(count >=500000) break;
                                         }
                                     }
                                 }
                             }
-                        }else {
+                        } else {
                             skipped++;
-                            System.out.println("Пропущена строка (не подошла под regex): " + line);
+                            System.out.println("Пропущена строка (не regex): " + line);
                         }
                     } catch (Exception e) {
                         skipped++;
-                        System.out.println("Пропущена строка (Ошибка парсинга): " + line);
+                        System.out.println("Ошибка парсинга: " + line);
                     }
                 }
 
@@ -138,17 +144,28 @@ public class DataLoader implements CommandLineRunner {
                     ps.executeBatch();
                     System.out.println("Записано " + count + " записей.");
                 }
-
-                System.out.println("Данные успешно записаны в PostgreSQL.");
-                System.out.println("Пропущено битых/некорректных строк: " + skipped);
-                double endTime = System.currentTimeMillis();
-                System.out.println("Время выполнения: " + (endTime - startTime) / 1000 + " с");
             }
+
+            // После загрузки делаем ANALYZE (обновляем статистику)
+            try (Statement st = conn.createStatement()) {
+                st.execute("ANALYZE logs");
+                // Освежаем материализованное представление
+                st.execute("REFRESH MATERIALIZED VIEW logs_daily_stats");
+                // Делаем таблицу снова LOGGED для обычного поведения транзакций
+                st.execute("ALTER TABLE logs SET LOGGED");
+                System.out.println("Таблица logs снова LOGGED. Все готово.");
+            }
+
+            System.out.println("Данные успешно записаны.");
+            System.out.println("Пропущено строк: " + skipped);
+            double endTime = System.currentTimeMillis();
+            System.out.println("Время: " + (endTime - startTime) / 1000 + " с");
 
         } catch (IOException | SQLException e) {
             e.printStackTrace();
         }
     }
+
 
     private static boolean shouldParseLogs() {
         String query = "SELECT time FROM logs ORDER BY time LIMIT 1";
