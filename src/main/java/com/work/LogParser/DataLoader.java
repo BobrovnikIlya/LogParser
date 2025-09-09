@@ -58,20 +58,20 @@ public class DataLoader implements CommandLineRunner {
 
     }
 
-    private static void parseToPostgres() {
+
+    private static void parseToPostgres() throws IOException {
         int count = 0;
-        int batchSize = 10000;
-        int skipped = 0;
+        int batchSize = 5000;
+        int skipped = 0; // счётчик битых строк
+        double startTime = System.currentTimeMillis();
+        CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.IGNORE)
+                .onUnmappableCharacter(CodingErrorAction.IGNORE);
 
-        float startTime = System.currentTimeMillis();
-        Charset[] charsetsToTry = new Charset[]{
-                StandardCharsets.UTF_8,
-                Charset.forName("Windows-1251"),
-                StandardCharsets.ISO_8859_1
-        };
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(LOG_FILE.toFile()), decoder));
+             Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
 
-        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
-            // Создаем таблицу, если не существует
+            // Создание таблицы с новым полем status_code
             try (Statement st = conn.createStatement()) {
                 String createTableSQL = "CREATE TABLE IF NOT EXISTS logs (" +
                         "id BIGSERIAL PRIMARY KEY," +
@@ -86,35 +86,6 @@ public class DataLoader implements CommandLineRunner {
 
             String insertSQL = "INSERT INTO logs (time, ip, username, url, status_code) VALUES (?, ?, ?, ?, ?)";
             try (PreparedStatement ps = conn.prepareStatement(insertSQL)) {
-
-                // Открываем файл, пробуем разные кодировки
-                BufferedReader br = null;
-                for (Charset cs : charsetsToTry) {
-                    try {
-                        CharsetDecoder decoder = cs.newDecoder()
-                                .onMalformedInput(CodingErrorAction.REPORT)
-                                .onUnmappableCharacter(CodingErrorAction.REPORT);
-                        br = new BufferedReader(new InputStreamReader(new FileInputStream(LOG_FILE.toFile()), decoder));
-                        br.readLine(); // тест первой строки
-                        br.close();
-                        // если дошли сюда без исключения — кодировка подходит
-                        decoder = cs.newDecoder()
-                                .onMalformedInput(CodingErrorAction.IGNORE)
-                                .onUnmappableCharacter(CodingErrorAction.IGNORE);
-                        br = new BufferedReader(new InputStreamReader(new FileInputStream(LOG_FILE.toFile()), decoder));
-                        System.out.println("Используется кодировка: " + cs.displayName());
-                        break;
-                    } catch (MalformedInputException e) {
-                        // не подходит, пробуем следующую
-                        System.out.println("Кодировка " + cs.displayName() + " не подошла.");
-                    }
-                }
-
-                if (br == null) {
-                    System.err.println("Не удалось определить кодировку файла.");
-                    return;
-                }
-
                 String line;
                 while ((line = br.readLine()) != null) {
                     try {
@@ -142,114 +113,36 @@ public class DataLoader implements CommandLineRunner {
                                         if (count % batchSize == 0) {
                                             ps.executeBatch();
                                             System.out.println("Записано " + count + " записей.");
+                                            //if(count >= 500000) break; // ограничитель
                                         }
                                     }
                                 }
                             }
-                        } else {
+                        }else {
                             skipped++;
                             System.out.println("Пропущена строка (не подошла под regex): " + line);
                         }
                     } catch (Exception e) {
                         skipped++;
-                        System.out.println("Пропущена строка (ошибка парсинга): " + line);
+                        System.out.println("Пропущена строка (Ошибка парсинга): " + line);
                     }
                 }
 
-                if (count % batchSize != 0) ps.executeBatch();
+                if (count % batchSize != 0) {
+                    ps.executeBatch();
+                    System.out.println("Записано " + count + " записей.");
+                }
+
                 System.out.println("Данные успешно записаны в PostgreSQL.");
                 System.out.println("Пропущено битых/некорректных строк: " + skipped);
-                System.out.println("Время выполнения: " + (System.currentTimeMillis() - startTime)/1000 + " с");
-
+                double endTime = System.currentTimeMillis();
+                System.out.println("Время выполнения: " + (endTime - startTime) / 1000 + " с");
             }
-        } catch (SQLException | IOException e) {
+
+        } catch (IOException | SQLException e) {
             e.printStackTrace();
         }
     }
-//
-//    private static void parseToPostgres() throws IOException {
-//        int count = 0;
-//        int batchSize = 10000;
-//        int skipped = 0; // счётчик битых строк
-//        String rawTime = "";
-//        String ip = "";
-//        float startTime = System.currentTimeMillis();
-//        CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
-//                .onMalformedInput(CodingErrorAction.IGNORE)
-//                .onUnmappableCharacter(CodingErrorAction.IGNORE);
-//
-//        try (BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(LOG_FILE.toFile()), decoder));
-//             Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
-//
-//            // Создание таблицы с новым полем status_code
-//            try (Statement st = conn.createStatement()) {
-//                String createTableSQL = "CREATE TABLE IF NOT EXISTS logs (" +
-//                        "id BIGSERIAL PRIMARY KEY," +
-//                        "time TIMESTAMP," +
-//                        "ip TEXT," +
-//                        "username TEXT," +
-//                        "url TEXT," +
-//                        "status_code INT" +
-//                        ")";
-//                st.execute(createTableSQL);
-//            }
-//
-//            String insertSQL = "INSERT INTO logs (time, ip, username, url, status_code) VALUES (?, ?, ?, ?, ?)";
-//            try (PreparedStatement ps = conn.prepareStatement(insertSQL)) {
-//                String line;
-//                while ((line = br.readLine()) != null) {
-//                    try {
-//                        Matcher m = LOG_PATTERN.matcher(line);
-//                        if (m.find()) {
-//                            rawTime = m.group(1);
-//                            ip = m.group(2);
-//                            String requestType = m.group(3); // TCP_TUNNEL / TCP_DENIED
-//                            int statusCode = Integer.parseInt(m.group(4)); // 200, 403, 407...
-//                            String url = m.group(5);
-//                            String username = m.group(6);
-//
-//                            LocalDateTime dateTime = convertTimestamp(rawTime);
-//                            if (dateTime != null) {
-//                                ps.setObject(1, dateTime);
-//                                ps.setString(2, ip);
-//                                ps.setString(3, username.equals("-") ? null : username);
-//                                ps.setString(4, url);
-//                                ps.setInt(5, statusCode);
-//                                ps.addBatch();
-//                                count++;
-//
-//                                if (count % batchSize == 0) {
-//                                    ps.executeBatch();
-//                                    System.out.println("Записано " + count + " записей.");
-//                                    //if(count > 5000000) break; // ограничитель
-//                                }
-//                            }
-//
-//                        } else {
-//                            skipped++;
-//                            System.out.println("Номер записи " + count + " не подошла под regex: " + rawTime + " user " + ip);
-//                        }
-//                    } catch (Exception e) {
-//                        skipped++;
-//                        System.out.println("Номер записи " + count + " ошибка парсинга: " + rawTime + " user " + ip);
-//                    }
-//                }
-//
-//                if (count % batchSize != 0) {
-//                    ps.executeBatch();
-//                    System.out.println("Записано " + count + " записей.");
-//                }
-//
-//                System.out.println("Данные успешно записаны в PostgreSQL.");
-//                System.out.println("Пропущено битых/некорректных строк: " + skipped);
-//                float endTime = System.currentTimeMillis();
-//                System.out.println("Время выполнения: " + (endTime - startTime)/1000 + " с");
-//            }
-//
-//        } catch (IOException | SQLException e) {
-//            e.printStackTrace();
-//        }
-//    }
 
     private static boolean shouldParseLogs() {
         String query = "SELECT time FROM logs ORDER BY time LIMIT 1";
@@ -279,8 +172,8 @@ public class DataLoader implements CommandLineRunner {
     private static void clearLogsTable() {
         try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD);
              Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate("DROP TABLE IF EXISTS logs");
-            System.out.println("Таблица logs успешно удалена.");
+            stmt.executeUpdate("TRUNCATE TABLE logs");
+            System.out.println("Таблица logs успешно очищена.");
         } catch (SQLException e) {
             e.printStackTrace();
         }
