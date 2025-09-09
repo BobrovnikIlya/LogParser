@@ -61,7 +61,7 @@ public class DataLoader implements CommandLineRunner {
 
     private static void parseToPostgres() throws IOException {
         int count = 0;
-        int batchSize = 10000;
+        int batchSize = 5000;
         int skipped = 0; // счётчик битых строк
         double startTime = System.currentTimeMillis();
         CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
@@ -119,7 +119,7 @@ public class DataLoader implements CommandLineRunner {
                                         if (count % batchSize == 0) {
                                             ps.executeBatch();
                                             System.out.println("Записано " + count + " записей.");
-                                            //if(count >= 500000) break; // ограничитель
+                                            if(count >= 500000) break; // ограничитель
                                         }
                                     }
                                 }
