@@ -87,7 +87,8 @@ public class DataLoader implements CommandLineRunner {
                 st.execute("CREATE INDEX IF NOT EXISTS idx_logs_time ON logs(time)");
                 st.execute("CREATE INDEX IF NOT EXISTS idx_logs_username ON logs(username)");
                 st.execute("CREATE INDEX IF NOT EXISTS idx_logs_status_code ON logs(status_code)");
-                st.execute("CREATE INDEX IF NOT EXISTS idx_logs_user_status_time ON logs(username, status_code, time)");
+                st.execute("CREATE INDEX IF NOT EXISTS idx_logs_url ON logs(url)");
+                st.execute("CREATE INDEX IF NOT EXISTS idx_logs_user_status_time_url ON logs(username, status_code, time, url)");
 
                 // Материализованное представление (агрегация по дням)
                 String createMV = "CREATE MATERIALIZED VIEW IF NOT EXISTS logs_daily_stats AS " +
@@ -125,7 +126,7 @@ public class DataLoader implements CommandLineRunner {
                                         if (count % batchSize == 0) {
                                             ps.executeBatch();
                                             System.out.println("Записано " + count + " записей.");
-                                            //if(count >=500000) break;
+                                            //if(count >=200000) break;
                                         }
                                     }
                                 }
