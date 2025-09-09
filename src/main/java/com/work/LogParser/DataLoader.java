@@ -61,7 +61,7 @@ public class DataLoader implements CommandLineRunner {
 
     private static void parseToPostgres() throws IOException {
         int count = 0;
-        int batchSize = 10000;
+        int batchSize = 5000;
         int skipped = 0;
         double startTime = System.currentTimeMillis();
         CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
