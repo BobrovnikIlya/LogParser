@@ -778,14 +778,15 @@ public class LogParsingService {
 
     public List<Map<String, Object>> getTopUsers(int limit) {
         List<Map<String, Object>> result = new ArrayList<>();
+
         String sql = "SELECT username, " +
+                "ip, " +  // <-- ДОБАВЛЕНО: берем IP пользователя
                 "COUNT(*) as count, " +
-                "COUNT(DISTINCT ip) as unique_ips, " +
                 "MIN(time) as first_seen, " +
                 "MAX(time) as last_seen " +
                 "FROM logs " +
                 "WHERE username IS NOT NULL AND username != '' AND username != '-' " +
-                "GROUP BY username " +
+                "GROUP BY username, ip " +  // <-- ИЗМЕНЕНО: группируем по username и ip
                 "ORDER BY count DESC " +
                 "LIMIT ?";
 
@@ -798,8 +799,8 @@ public class LogParsingService {
                 while (rs.next()) {
                     Map<String, Object> item = new HashMap<>();
                     item.put("username", rs.getString("username"));
+                    item.put("ip", rs.getString("ip"));
                     item.put("count", rs.getInt("count"));
-                    item.put("unique_ips", rs.getInt("unique_ips"));
                     item.put("first_seen", rs.getTimestamp("first_seen"));
                     item.put("last_seen", rs.getTimestamp("last_seen"));
                     result.add(item);

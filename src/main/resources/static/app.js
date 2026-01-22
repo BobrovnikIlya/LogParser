@@ -1323,11 +1323,14 @@ function displayTopUsers(users) {
         const lastSeen = user.last_seen ? 
             new Date(user.last_seen).toLocaleString() : 'N/A';
         
+        // Для варианта 1 или 2 (один IP)
+        const userIp = user.ip || 'N/A';
+        
         row.innerHTML = `
             <td>${index + 1}</td>
             <td><strong>${user.username}</strong></td>
             <td><strong>${user.count.toLocaleString()}</strong></td>
-            <td>${user.unique_ips ? user.unique_ips.toLocaleString() : 'N/A'}</td>
+            <td>${userIp}</td>
             <td>${firstSeen}</td>
             <td>${lastSeen}</td>
         `;
