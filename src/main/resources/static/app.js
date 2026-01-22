@@ -156,14 +156,14 @@ function getStageDescription(stage) {
     return stages[stage] || `Этап ${stage}`;
 }
 
-function getStageDescription(stage) {
-    const stages = {
-        1: 'Подготовка файла',
-        2: 'Загрузка на сервер',
-        3: 'Проверка формата',
-        4: 'Парсинг данных'
+function getStageButtonText(stage) {
+    const stageTexts = {
+        1: '📁 Подготовка...',
+        2: '⬆️ Загрузка...',
+        3: '🔍 Проверка...',
+        4: '⚙️ Парсинг...',
     };
-    return stages[stage] || `Этап ${stage}`;
+    return stageTexts[stage] || '🚀 Начать парсинг';
 }
 
 // Data loading and display
@@ -427,6 +427,50 @@ async function startParsing() {
         resetParsingProgress();
     }
 }
+
+function resetParsingProgress() {
+    console.log('🔄 Сброс прогресса парсинга');
+    
+    // Останавливаем polling если он запущен
+    stopProgressPolling();
+    
+    // Сбрасываем элементы UI
+    const statusElement = document.getElementById('parsingStatus');
+    const progressBar = document.getElementById('parsingProgressBar');
+    const progressText = document.getElementById('parsingProgressText');
+    const detailsElement = document.getElementById('parsingDetails');
+    const stageElement = document.getElementById('parsingStage');
+    
+    if (statusElement) {
+        statusElement.textContent = 'Готов к работе';
+        statusElement.style.color = 'var(--text)';
+    }
+    
+    if (progressBar) {
+        progressBar.style.width = '0%';
+    }
+    
+    if (progressText) {
+        progressText.textContent = 'Прогресс: 0%';
+    }
+    
+    if (detailsElement) {
+        detailsElement.textContent = '';
+        detailsElement.style.display = 'none';
+    }
+    
+    if (stageElement) {
+        stageElement.textContent = '';
+        stageElement.style.display = 'none';
+    }
+    
+    // Сбрасываем временные переменные
+    startTime = null;
+    
+    console.log('✅ Прогресс парсинга сброшен');
+}
+
+
 function startProgressPolling() {
     console.log('🔄 Запуск polling статуса парсинга');
     
@@ -1872,6 +1916,7 @@ window.showTopUrls = showTopUrls;
 window.showTopUsers = showTopUsers;
 window.toggleTheme = toggleTheme;
 window.startParsing = startParsing;
+window.resetParsingProgress = resetParsingProgress;
 
 window.cancelCurrentRequest = cancelCurrentRequest;
 window.initializeApp = initializeAppWithStatus;
