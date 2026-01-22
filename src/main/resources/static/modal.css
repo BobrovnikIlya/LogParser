@@ -1,0 +1,158 @@
+/* Модальные окна */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    overflow: auto;
+}
+
+.modal-content {
+    background-color: var(--bg);
+    margin: 50px auto;
+    padding: 0;
+    border-radius: 10px;
+    width: 90%;
+    max-width: 1200px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 5px 30px rgba(0, 0, 0, 0.3);
+    animation: modalSlideIn 0.3s ease-out;
+}
+
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-50px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.modal-header {
+    padding: 20px 30px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    border-radius: 10px 10px 0 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h2 {
+    margin: 0;
+    color: var(--text);
+    font-size: 1.5rem;
+}
+
+.close-modal {
+    color: var(--muted);
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.close-modal:hover {
+    color: var(--text);
+}
+
+.modal-body {
+    padding: 25px 30px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.modal-footer {
+    padding: 20px 30px;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border);
+    border-radius: 0 0 10px 10px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 15px;
+}
+
+/* Таблицы внутри модальных окон */
+.top-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+}
+
+.top-table thead {
+    background: var(--bg-secondary);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.top-table th {
+    padding: 15px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text);
+    border-bottom: 2px solid var(--border);
+    white-space: nowrap;
+}
+
+.top-table td {
+    padding: 12px 15px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+}
+
+.top-table tbody tr:hover {
+    background-color: var(--bg-secondary);
+    transition: background-color 0.2s;
+}
+
+.top-table .url-cell {
+    max-width: 500px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.top-table .domain-cell {
+    color: var(--accent);
+    font-weight: 500;
+}
+
+.table-container {
+    max-height: 60vh;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+/* Номера строк */
+.top-table tbody tr td:first-child {
+    font-weight: bold;
+    color: var(--muted);
+    text-align: center;
+    width: 50px;
+}
+
+/* Темная тема для модальных окон */
+body.dark .modal-content {
+    background-color: #1e1e1e;
+    border: 1px solid #333;
+}
+
+body.dark .modal-header,
+body.dark .modal-footer {
+    background-color: #252525;
+    border-color: #333;
+}
+
+body.dark .top-table thead {
+    background-color: #252525;
+}

@@ -1,0 +1,455 @@
+/* ============================================
+   СТИЛИ ДЛЯ СЕТКИ ФИЛЬТРОВ
+   ============================================ */
+
+/* Основной контейнер фильтров - сетка 6 колонок */
+.filters {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 15px;
+    margin-bottom: 0;
+    padding: 20px;
+    background: var(--table-hover);
+    border-radius: var(--radius);
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    backdrop-filter: saturate(120%) blur(2px);
+}
+
+/* Базовый стиль для всех групп фильтров */
+.filter-group {
+    display: flex;
+    flex-direction: column;
+}
+
+/* ВЕРХНИЙ РЯД: 6 фильтров по 1 колонке каждый */
+.filter-1,
+.filter-2,
+.filter-3,
+.filter-4,
+.filter-5,
+.filter-6 {
+    grid-column: span 1;
+}
+
+/* НИЖНИЙ РЯД: 3 элемента по 2 колонки каждый */
+.filter-search {
+    grid-column: span 2;
+    grid-row: 2;
+}
+
+.filter-buttons {
+    grid-column: span 2;
+    grid-row: 2;
+}
+
+.filter-status {
+    grid-column: span 2;
+    grid-row: 2;
+}
+
+/* ============================================
+   СТИЛИ ДЛЯ ЭЛЕМЕНТОВ ФИЛЬТРОВ
+   ============================================ */
+
+/* Метки фильтров */
+.filter-group label {
+    height: 20px;
+    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+    font-weight: 600;
+    color: var(--muted);
+    font-size: 14px;
+}
+
+/* Пустая метка для элементов второго ряда */
+.filter-buttons label,
+.filter-status label {
+    visibility: hidden;
+    height: 20px;
+}
+
+/* Поля ввода и выбора */
+.filters input,
+.filters select {
+    height: 40px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 14px;
+    background: var(--card);
+    color: var(--text);
+    transition: border-color 0.3s ease;
+    box-sizing: border-box;
+}
+
+.filters input:focus,
+.filters select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(0, 86, 166, 0.1);
+}
+
+/* Контейнер кнопок */
+.buttons-container {
+    display: flex;
+    gap: 10px;
+    height: 40px;
+    width: 100%;
+}
+
+/* Кнопки фильтров - делаем идентичными остальным кнопкам */
+/* Кнопки фильтров - делаем идентичными кнопкам экспорта */
+.filters .btn-primary,
+.filters .btn-secondary {
+    flex: 1;
+    height: 40px;
+    padding: 0 16px;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    min-width: 0;
+    box-sizing: border-box;
+    
+    /* Основные свойства как у кнопок экспорта */
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px; /* Тот же радиус, как у кнопок экспорта */
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+
+/* Ховер эффект такой же как у кнопок экспорта */
+.filters .btn-primary:hover,
+.filters .btn-secondary:hover {
+    background: var(--accent-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+/* Активное состояние */
+.filters .btn-primary:active,
+.filters .btn-secondary:active {
+    transform: translateY(0);
+}
+
+/* Специфичный стиль для кнопки "Очистить" - вторичная кнопка */
+.filters .btn-secondary {
+    background: #6b7a8a; /* Серый цвет как у вторичных кнопок экспорта */
+}
+
+.filters .btn-secondary:hover {
+    background: #5e6c7c; /* Темнее при ховере */
+}
+
+/* Для кнопок экспорта добавьте такие же стили если их еще нет */
+.actions-buttons button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+
+.actions-buttons button:hover {
+    background: var(--accent-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+/* Отключенное состояние */
+.filters .btn-primary:disabled,
+.filters .btn-secondary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.filters .btn-primary:disabled:hover,
+.filters .btn-secondary:disabled:hover {
+    background: var(--accent);
+    transform: none;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+
+.filters .btn-secondary:disabled:hover {
+    background: #6b7a8a;
+}
+
+/* Для очень длинного текста "Применить фильтры" */
+.filters .btn-primary {
+    font-size: 13px;
+    padding: 0 12px;
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+    .filters .btn-primary,
+    .filters .btn-secondary {
+        font-size: 13px;
+        padding: 0 10px;
+        border-radius: 8px; /* Сохраняем радиус на мобильных */
+    }
+}
+
+/* Альтернативный вариант с абсолютным позиционированием кнопки */
+.request-status {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 40px;
+    padding: 0 15px;
+    background: var(--card);
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    font-size: 14px;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+#statusText {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: center;
+    padding: 0 80px;
+    color: var(--text); /* Используем основной цвет текста */
+    font-weight: 600; /* Полужирный как у "Загрузка данных..." */
+    font-size: 14px; /* Такой же размер */
+}
+
+/* Обновляем стиль для времени выполнения */
+#statusText:not(.loading)::after {
+    content: attr(data-time);
+    margin-left: 8px;
+    font-size: 14px; /* Такой же размер шрифта */
+    color: var(--accent); /* Цвет акцента как у "Загрузка данных..." */
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; /* Основной шрифт */
+    font-weight: 600; /* Полужирный */
+    opacity: 1; /* Полная непрозрачность */
+    display: inline-block;
+}
+
+/* Стиль для состояния загрузки */
+#statusText.loading {
+    color: var(--accent); /* Цвет акцента */
+    font-weight: 600; /* Полужирный */
+}
+
+#statusText.loading::before {
+    content: '●';
+    display: inline-block;
+    margin-right: 8px;
+    color: var(--accent);
+    animation: pulse-dot 1.5s infinite;
+    font-weight: 600;
+}
+
+/* Для состояния загрузки не показываем время */
+#statusText.loading::after {
+    content: '' !important;
+}
+
+
+/* Стили для загрузки */
+.request-status.loading {
+    border-color: var(--accent) !important;
+}
+
+.btn-cancel {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: #dc3545 !important;
+    padding: 5px 8px !important;
+    font-size: 11px !important;
+    height: 26px !important;
+    border-radius: 4px !important;
+    text-transform: none !important;
+    letter-spacing: normal !important;
+    white-space: nowrap;
+    flex-shrink: 0;
+    
+    /* Убираем трансформацию при ховере или делаем минимальной */
+    transition: background-color 0.2s ease, opacity 0.2s ease; /* Только цвет и прозрачность */
+}
+
+/* Альтернативный вариант - легкий подъем вместо смещения вниз */
+.btn-cancel:hover {
+    background: #c82333 !important;
+    transform: translateY(-55%) !important; /* Легкий подъем вместо падения вниз */
+    box-shadow: 0 2px 4px rgba(0,0,0,0.15) !important;
+}
+
+/* ============================================
+   СТИЛИ ДЛЯ СОСТОЯНИЯ ЗАГРУЗКИ
+   ============================================ */
+
+/* Анимация спиннера */
+@keyframes pulse-dot {
+    0% { 
+        opacity: 0.4;
+        transform: scale(0.8);
+    }
+    50% { 
+        opacity: 1;
+        transform: scale(1.2);
+    }
+    100% { 
+        opacity: 0.4;
+        transform: scale(0.8);
+    }
+}
+
+/* ============================================
+   АДАПТИВНОСТЬ
+   ============================================ */
+
+/* Планшеты (768px - 991px) */
+@media (min-width: 768px) and (max-width: 991px) {
+    .filters {
+        grid-template-columns: repeat(3, 1fr);
+    }
+    
+    /* Верхний ряд: первые 6 фильтров по 1 колонке */
+    .filter-1,
+    .filter-2,
+    .filter-3,
+    .filter-4,
+    .filter-5,
+    .filter-6 {
+        grid-column: span 1;
+    }
+    
+    /* Нижний ряд адаптация */
+    .filter-search {
+        grid-column: span 2;
+        grid-row: 2;
+    }
+    
+    .filter-buttons {
+        grid-column: span 1;
+        grid-row: 2;
+    }
+    
+    .filter-status {
+        grid-column: span 3;
+        grid-row: 3;
+    }
+    
+    /* Увеличиваем шрифт кнопок для лучшей читаемости */
+    .filters .btn-primary,
+    .filters .btn-secondary {
+        font-size: 12.5px;
+        padding: 0 10px;
+    }
+}
+
+/* Мобильные телефоны (до 767px) */
+@media (max-width: 767px) {
+    .filters {
+        grid-template-columns: 1fr;
+        gap: 12px;
+        padding: 15px;
+    }
+    
+    /* Все элементы в один столбец */
+    .filter-1,
+    .filter-2,
+    .filter-3,
+    .filter-4,
+    .filter-5,
+    .filter-6,
+    .filter-search,
+    .filter-buttons,
+    .filter-status {
+        grid-column: span 1;
+        grid-row: auto;
+    }
+    
+    /* Контейнер кнопок в колонку */
+    .buttons-container {
+        flex-direction: column;
+        height: auto;
+        gap: 8px;
+    }
+    
+    /* Кнопки на всю ширину */
+    .filters .btn-primary,
+    .filters .btn-secondary {
+        width: 100%;
+        height: 38px;
+        font-size: 14px;
+        padding: 0 16px;
+    }
+    
+    /* Блок статуса */
+    .request-status {
+        height: auto;
+        min-height: 40px;
+        padding: 10px 15px;
+    }
+    
+    /* Увеличиваем кнопку отмены на мобильных */
+    .btn-cancel {
+        font-size: 12px !important;
+        padding: 6px 10px !important;
+        height: 30px !important;
+    }
+}
+
+/* Большие планшеты и маленькие десктопы (992px - 1199px) */
+@media (min-width: 992px) and (max-width: 1199px) {
+    .filters {
+        grid-template-columns: repeat(4, 1fr);
+    }
+    
+    /* Верхний ряд: первые 6 фильтров на 2 строки */
+    .filter-1,
+    .filter-2,
+    .filter-3,
+    .filter-4 {
+        grid-column: span 1;
+    }
+    
+    .filter-5,
+    .filter-6 {
+        grid-column: span 2;
+    }
+    
+    /* Нижний ряд адаптация */
+    .filter-search,
+    .filter-buttons {
+        grid-column: span 2;
+        grid-row: 3;
+    }
+    
+    .filter-status {
+        grid-column: span 4;
+        grid-row: 4;
+    }
+}
