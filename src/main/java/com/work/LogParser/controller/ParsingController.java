@@ -113,11 +113,12 @@ public class ParsingController {
             @RequestParam(required = false) String clientIp,
             @RequestParam(required = false) String username,
             @RequestParam(required = false) String status,
-            @RequestParam(required = false) String search) {
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String action) {
 
         try {
             Map<String, Object> result = logParsingService.getLogsWithStats(
-                    page, size, dateFrom, dateTo, clientIp, username, status, search
+                    page, size, dateFrom, dateTo, clientIp, username, status, search, action
             );
 
             Map<String, Object> response = new HashMap<>(result);

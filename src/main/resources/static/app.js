@@ -263,12 +263,13 @@ function displayLogs(logs) {
         const sizeKB = (log.responseSize / 1024).toFixed(2);
         const displayUrl = log.url.length > 50 ? log.url.substring(0, 50) + '...' : log.url;
         
+        // В функции displayLogs():
         row.innerHTML = `
             <td>${new Date(log.time).toLocaleString()}</td>
             <td>${log.ip}</td>
             <td>${log.username || ''}</td>
             <td class="${statusClass}">${log.statusCode}</td>
-            <td>${log.action || 'N/A'}</td>
+            <td>${log.action || 'N/A'}</td>  <!-- УЖЕ ЕСТЬ В КОДЕ! -->
             <td>${log.responseTime || 0}мс</td>
             <td>${sizeKB} КБ</td>
             <td title="${log.url}">${displayUrl}</td>

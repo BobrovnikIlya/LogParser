@@ -135,8 +135,8 @@ public class LogParsingService {
 
             try (BufferedReader br = new BufferedReader(new java.io.FileReader(filePath));
                  PreparedStatement ps = conn.prepareStatement(
-                         "INSERT INTO logs_unlogged (time, ip, username, url, status_code, domain, response_time_ms, response_size_bytes) " +
-                                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+                         "INSERT INTO logs_unlogged (time, ip, username, url, status_code, domain, response_time_ms, response_size_bytes, action) " +
+                                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
 
                 String line;
                 long processed = 0;
@@ -157,27 +157,38 @@ public class LogParsingService {
                         java.util.regex.Matcher m = LOG_PATTERN.matcher(line);
 
                         if (m.find()) {
-                            // ДЕБАГ: выводим первую найденную строку
-                            if (count == 0) {
-                                System.out.println("ПЕРВАЯ УСПЕШНО РАСПАРСЕННАЯ СТРОКА:");
-                                System.out.println("Строка: " + line);
-                                System.out.println("Группы:");
-                                for (int i = 1; i <= m.groupCount(); i++) {
-                                    System.out.println("  Группа " + i + ": '" + m.group(i) + "'");
-                                }
-                            }
-
                             String rawTime = m.group(1);
                             int responseTimeMs = Integer.parseInt(m.group(2));
                             String ip = m.group(3);
                             String actionStatus = m.group(4);
-                            int statusCode = Integer.parseInt(m.group(5));
+
+                            String action = "";
+                            int statusCode = 0;
+
+                            try {
+                                String[] parts = actionStatus.split("/");
+                                if (parts.length >= 2) {
+                                    action = parts[0];           // "TCP_REFRESH_MODIFIED"
+                                    statusCode = Integer.parseInt(parts[1]);  // 200
+                                } else {
+                                    // Если нет "/", пробуем извлечь статус из строки
+                                    action = actionStatus;
+                                    // Пытаемся найти цифры в строке
+                                    java.util.regex.Matcher numMatcher = Pattern.compile("\\d{3}").matcher(actionStatus);
+                                    if (numMatcher.find()) {
+                                        statusCode = Integer.parseInt(numMatcher.group());
+                                    }
+                                }
+                            } catch (Exception e) {
+                                System.err.println("Ошибка разбора action/status: " + actionStatus);
+                                statusCode = 0;
+                                action = actionStatus;
+                            }
+
                             long responseSizeBytes = Long.parseLong(m.group(6));
                             String httpMethod = m.group(7);
                             String url = m.group(8);
                             String username = m.group(9);
-                            String hierarchy = m.group(10);
-                            String contentType = m.group(11);
 
                             if (username != null && !username.equals("-")) {
                                 username = username.trim();
@@ -187,6 +198,16 @@ public class LogParsingService {
                                         if (dateTime != null) {
                                             String domain = extractDomain(url);
 
+                                            // ДЕБАГ: выводим первую найденную строку
+                                            if (count == 0) {
+                                                System.out.println("ПЕРВАЯ УСПЕШНО РАСПАРСЕННАЯ СТРОКА:");
+                                                System.out.println("Строка: " + line);
+                                                System.out.println("Группы:");
+                                                for (int i = 1; i <= m.groupCount(); i++) {
+                                                    System.out.println("  Группа " + i + ": '" + m.group(i) + "'");
+                                                }
+                                            }
+
                                             ps.setObject(1, dateTime);
                                             ps.setString(2, ip);
                                             ps.setString(3, username);
@@ -195,6 +216,7 @@ public class LogParsingService {
                                             ps.setString(6, domain);
                                             ps.setInt(7, responseTimeMs);
                                             ps.setLong(8, responseSizeBytes);
+                                            ps.setString(9, action);
 
                                             ps.addBatch();
                                             count++;
@@ -412,10 +434,12 @@ public class LogParsingService {
                     "url TEXT," +
                     "status_code INT," +
                     "domain TEXT," +
-                    "response_time_ms INT," +
-                    "response_size_bytes BIGINT" +
+                    "response_time_ms INT," +          // Время ответа
+                    "response_size_bytes BIGINT," +     // Размер ответа
+                    "action TEXT" +                     // Действие proxy
                     ")";
             st.execute(createTableSQL);
+            System.out.println("Создана таблица logs_unlogged с колонкой action");
         }
     }
 
@@ -465,7 +489,8 @@ public class LogParsingService {
                     {"idx_logs_domain", "CREATE INDEX idx_logs_domain ON logs(domain)"},
                     {"idx_logs_url_pattern", "CREATE INDEX idx_logs_url_pattern ON logs(url text_pattern_ops)"},
                     {"idx_logs_response_time", "CREATE INDEX idx_logs_response_time ON logs(response_time_ms) WHERE response_time_ms > 0"},
-                    {"idx_logs_response_size", "CREATE INDEX idx_logs_response_size ON logs(response_size_bytes) WHERE response_size_bytes > 0"}
+                    {"idx_logs_response_size", "CREATE INDEX idx_logs_response_size ON logs(response_size_bytes) WHERE response_size_bytes > 0"},
+                    {"idx_logs_action", "CREATE INDEX idx_logs_action ON logs(action)"}
             };
 
             // Проверяем существование каждого индекса перед созданием
@@ -629,7 +654,7 @@ public class LogParsingService {
     public Map<String, Object> getLogsWithStats(int page, int size,
                                                 String dateFrom, String dateTo,
                                                 String clientIp, String username,
-                                                String status, String search) {
+                                                String status, String search, String action) {
 
         Map<String, Object> result = new HashMap<>();
 
@@ -657,9 +682,12 @@ public class LogParsingService {
             if (search != null && !search.isEmpty()) {
                 where.append(" AND (url LIKE '%").append(search).append("%' OR domain LIKE '%").append(search).append("%')");
             }
-
+            if (action != null && !action.isEmpty()) {
+                where.append(" AND action = '").append(action).append("'");
+            }
             // Получаем данные
-            String sql = "SELECT id, time, ip, username, url, status_code as statusCode, domain " +
+            String sql = "SELECT id, time, ip, username, url, status_code as statusCode, domain, " +
+                    "response_time_ms as responseTime, response_size_bytes as responseSize, action " +
                     "FROM logs " + where + " ORDER BY time DESC LIMIT " + size + " OFFSET " + offset;
 
             List<Map<String, Object>> logs = jdbcTemplate.queryForList(sql);
