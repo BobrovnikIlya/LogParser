@@ -24,7 +24,8 @@ const API_ENDPOINTS = {
     START_PARSING: '/api/start-file-parsing',
     PARSING_STATUS: '/api/parsing-status',
     CHECK_FILE: '/api/check-file',  // Добавляем новый endpoint
-    CHECK_DATA: '/api/check-data'
+    CHECK_DATA: '/api/check-data',
+    STATUSES: '/api/statuses'
 };
 
 // Конфигурация порогов
@@ -51,6 +52,38 @@ function showNotification(message, isError = true) {
     setTimeout(() => {
         notification.style.display = 'none';
     }, 3000);
+}
+async function loadStatuses() {
+    try {
+        const response = await fetch(API_ENDPOINTS.STATUSES);
+        const data = await response.json();
+
+        if (data.success && data.statuses) {
+            const statusSelect = document.getElementById('status');
+            if (statusSelect) {
+                // Сохраняем текущее значение
+                const currentValue = statusSelect.value;
+
+                // Очищаем опции кроме первой
+                statusSelect.innerHTML = '<option value="">Все</option>';
+
+                // Добавляем статусы
+                data.statuses.forEach(status => {
+                    const option = document.createElement('option');
+                    option.value = status;
+                    option.textContent = status;
+                    statusSelect.appendChild(option);
+                });
+
+                // Восстанавливаем выбранное значение
+                if (currentValue && Array.from(statusSelect.options).some(opt => opt.value === currentValue)) {
+                    statusSelect.value = currentValue;
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки статусов:', error);
+    }
 }
 
 function getFilters() {
@@ -924,6 +957,14 @@ function updateParsingUI(status) {
             if (stageElement) stageElement.style.display = 'none';
         }
     }
+
+     if (!status.isParsing && status.progress >= 100) {
+            // Перезагружаем статусы после парсинга
+            setTimeout(() => {
+                loadStatuses();
+                loadData(); // существующий вызов
+            }, 500);
+        }
 }
 
 // Вспомогательная функция для текста кнопки по этапам
@@ -1577,7 +1618,8 @@ function formatTime(seconds) {
 function initializeAppWithStatus() {
     applySavedTheme();
     setupSorting();
-    
+    loadStatuses();
+
     // Добавляем обработчики событий
     document.addEventListener('keydown', handleEscapeKey);
     window.addEventListener('beforeunload', handleBeforeUnload);

@@ -6,6 +6,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
+import java.sql.*;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -227,6 +229,74 @@ public class ParsingController {
             return ResponseEntity.ok(Map.of(
                     "exists", false,
                     "error", "Ошибка: " + e.getMessage()
+            ));
+        }
+    }
+    @GetMapping("/statuses")
+    public ResponseEntity<?> getStatuses() {
+        try {
+            List<Integer> statuses = new ArrayList<>();
+
+            // Используем прямое подключение как в других методах
+            String DB_URL = "jdbc:postgresql://localhost:5432/ParserLog";
+            String DB_USERNAME = "postgres";
+            String DB_PASSWORD = "uthgb123";
+
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
+                // Сначала проверяем существование таблицы
+                boolean tableExists = false;
+                try (Statement stmt = conn.createStatement();
+                     ResultSet rs = stmt.executeQuery(
+                             "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'log_statuses')")) {
+                    if (rs.next()) {
+                        tableExists = rs.getBoolean(1);
+                    }
+                }
+
+                if (tableExists) {
+                    // Получаем статусы отсортированные по частоте использования
+                    String sql = "SELECT ls.status_code, COUNT(l.id) as usage_count " +
+                            "FROM log_statuses ls " +
+                            "LEFT JOIN logs l ON ls.status_code = l.status_code " +
+                            "GROUP BY ls.status_code " +
+                            "ORDER BY usage_count DESC, ls.status_code";
+
+                    try (PreparedStatement ps = conn.prepareStatement(sql);
+                         ResultSet rs = ps.executeQuery()) {
+
+                        while (rs.next()) {
+                            statuses.add(rs.getInt("status_code"));
+                        }
+                    }
+                } else {
+                    // Если таблицы нет, берем из logs напрямую
+                    String sql = "SELECT DISTINCT status_code FROM logs " +
+                            "WHERE status_code IS NOT NULL AND status_code > 0 " +
+                            "ORDER BY status_code";
+
+                    try (PreparedStatement ps = conn.prepareStatement(sql);
+                         ResultSet rs = ps.executeQuery()) {
+
+                        while (rs.next()) {
+                            statuses.add(rs.getInt("status_code"));
+                        }
+                    }
+                }
+            }
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "statuses", statuses,
+                    "count", statuses.size()
+            ));
+
+        } catch (Exception e) {
+            System.err.println("Ошибка получения статусов: " + e.getMessage());
+            return ResponseEntity.ok(Map.of(
+                    "success", false,
+                    "error", "Ошибка получения статусов",
+                    "statuses", new ArrayList<>(),
+                    "count", 0
             ));
         }
     }

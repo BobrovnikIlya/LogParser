@@ -219,6 +219,10 @@ public class LogParsingService {
                                             ps.addBatch();
                                             count++;
 
+                                            if (statusCode > 0) {
+                                                saveStatusIfNotExists(conn, statusCode);
+                                            }
+
                                             if (count % batchSize == 0) {
                                                 ps.executeBatch();
                                                 System.out.println("Выполнен batch из " + batchSize + " записей");
@@ -833,15 +837,6 @@ public class LogParsingService {
                 }
             }
 
-            if (!logs.isEmpty()) {
-                System.out.println("Первая запись лога (поля): " + logs.get(0).keySet());
-                System.out.println("Первая запись лога (значения):");
-                for (Map.Entry<String, Object> entry : logs.get(0).entrySet()) {
-                    System.out.println("  " + entry.getKey() + ": " + entry.getValue() +
-                            " (тип: " + (entry.getValue() != null ? entry.getValue().getClass().getName() : "null") + ")");
-                }
-            }
-
             // Общее количество
             String countSql = "SELECT COUNT(*) FROM logs " + where;
             Long totalCount = jdbcTemplate.queryForObject(countSql, Long.class);
@@ -1122,5 +1117,90 @@ public class LogParsingService {
         }
 
         return result;
+    }
+
+    private void createStatusesTable(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            // Проверяем существование таблицы
+            boolean tableExists = false;
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'log_statuses')")) {
+                if (rs.next()) {
+                    tableExists = rs.getBoolean(1);
+                }
+            }
+
+            if (!tableExists) {
+                // Создаем таблицу для хранения уникальных статусов
+                String createSQL = "CREATE TABLE log_statuses (" +
+                        "status_code INT PRIMARY KEY," +
+                        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                        ")";
+                stmt.execute(createSQL);
+                System.out.println("Таблица log_statuses создана");
+
+                // Создаем индекс для быстрого поиска
+                stmt.execute("CREATE INDEX idx_log_statuses_code ON log_statuses(status_code)");
+            }
+        }
+    }
+
+    private void saveStatusIfNotExists(Connection conn, int statusCode) throws SQLException {
+        if (statusCode <= 0) return;
+
+        String sql = "INSERT INTO log_statuses (status_code) VALUES (?) " +
+                "ON CONFLICT (status_code) DO NOTHING";
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, statusCode);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            // Игнорируем если таблицы нет или другие не критичные ошибки
+            System.err.println("Не удалось сохранить статус " + statusCode + ": " + e.getMessage());
+        }
+    }
+
+    public List<Integer> getAvailableStatuses() {
+        List<Integer> statuses = new ArrayList<>();
+
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
+            // Пробуем получить из таблицы статусов
+            boolean hasStatusesTable = false;
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(
+                         "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'log_statuses')")) {
+                if (rs.next()) {
+                    hasStatusesTable = rs.getBoolean(1);
+                }
+            }
+
+            if (hasStatusesTable) {
+                String sql = "SELECT status_code FROM log_statuses ORDER BY status_code";
+                try (PreparedStatement ps = conn.prepareStatement(sql);
+                     ResultSet rs = ps.executeQuery()) {
+
+                    while (rs.next()) {
+                        statuses.add(rs.getInt(1));
+                    }
+                }
+            } else {
+                // Fallback: берем из logs
+                String sql = "SELECT DISTINCT status_code FROM logs " +
+                        "WHERE status_code IS NOT NULL AND status_code > 0 " +
+                        "ORDER BY status_code";
+                try (PreparedStatement ps = conn.prepareStatement(sql);
+                     ResultSet rs = ps.executeQuery()) {
+
+                    while (rs.next()) {
+                        statuses.add(rs.getInt(1));
+                    }
+                }
+            }
+
+        } catch (SQLException e) {
+            System.err.println("Ошибка получения списка статусов: " + e.getMessage());
+        }
+
+        return statuses;
     }
 }
