@@ -613,6 +613,7 @@ public class LogParsingService {
             result.put("totalPages", 1);
         }
 
+
         return result;
     }
 
