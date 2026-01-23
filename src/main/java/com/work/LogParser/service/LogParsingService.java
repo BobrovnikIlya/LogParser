@@ -30,16 +30,18 @@ public class LogParsingService {
     private static final String DB_PASSWORD = "uthgb123";
 
     private static final Pattern LOG_PATTERN = Pattern.compile(
-            "^(\\d+\\.\\d+)\\s+" +
-                    "\\d+\\s+" +
-                    "(\\d+\\.\\d+\\.\\d+\\.\\d+)\\s+" +
-                    "(\\S+)/(\\d+)\\s+" +
-                    "\\d+\\s+" +
-                    "\\S+\\s+" +
-                    "(\\S+)\\s+" +
-                    "(\\S+|-)"
+            "^" +
+                    "(\\d+\\.\\d+)\\s+" +              // 1. timestamp
+                    "(\\d+)\\s+" +                     // 2. Время ответа (мс)
+                    "(\\d+\\.\\d+\\.\\d+\\.\\d+)\\s+" + // 3. IP клиента
+                    "(\\S+)/(\\d+)\\s+" +              // 4. Действие/статус (TCP_TUNNEL/200)
+                    "(\\d+)\\s+" +                     // 5. Размер ответа (байты)
+                    "(\\S+)\\s+" +                     // 6. HTTP метод (CONNECT/GET)
+                    "(\\S+)\\s+" +                     // 7. URL (domain:port или http://...)
+                    "(\\S+|-)\\s+" +                   // 8. Имя пользователя или "-"
+                    "(\\S+)\\s+" +                     // 9. Иерархия (HIER_DIRECT/...)
+                    "(\\S+)"                           // 10. Content-Type (text/html и т.д.)
     );
-
     private static final Pattern USERNAME_PATTERN = Pattern.compile(
             "^(.*_.*_.*|.*user.*)$", Pattern.CASE_INSENSITIVE
     );
@@ -92,59 +94,94 @@ public class LogParsingService {
     }
 
     private void parseWithOriginalCode(String filePath) {
-        // ВАШ ОРИГИНАЛЬНЫЙ КОД ИЗ DataLoader с небольшими изменениями для прогресса
         int count = 0;
         int batchSize = 5000;
         int skipped = 0;
         int filteredByUsername = 0;
         long startTime = System.currentTimeMillis();
 
-        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
+        System.out.println("Начало парсинга файла: " + filePath);
 
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
             // 1. Проверяем нужно ли парсить
             if (!shouldParseLogs(conn, filePath)) {
+                System.out.println("Парсинг не требуется - данные актуальны");
                 currentStatus.status = "Парсинг не требуется - данные актуальны";
                 currentStatus.progress = 100;
                 currentStatus.isParsing = false;
                 return;
             }
-            // 2. Считаем строки для прогресса (опционально)
+
+            // 2. Считаем строки
+            System.out.println("Подсчет строк...");
             currentStatus.status = "Подсчет строк...";
             long totalLines = countLines(filePath);
             currentStatus.total = totalLines;
+            System.out.println("Всего строк в файле: " + totalLines);
 
             // 3. Очищаем таблицу
+            System.out.println("Очистка таблицы...");
             currentStatus.status = "Очистка таблицы...";
             clearLogsTable(conn);
 
-            // 4. Создаем таблицу и индексы (UNLOGGED для скорости)
+            // 4. Создаем временную таблицу
+            System.out.println("Создание временной таблицы...");
             currentStatus.status = "Создание таблиц...";
             createUnloggedTable(conn);
 
             // 5. Парсим файл
+            System.out.println("Начало парсинга строк...");
             currentStatus.status = "Парсинг файла...";
+
             try (BufferedReader br = new BufferedReader(new java.io.FileReader(filePath));
                  PreparedStatement ps = conn.prepareStatement(
-                         "INSERT INTO logs_unlogged (time, ip, username, url, status_code, domain) VALUES (?, ?, ?, ?, ?, ?)")) {
+                         "INSERT INTO logs_unlogged (time, ip, username, url, status_code, domain, response_time_ms, response_size_bytes) " +
+                                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
 
                 String line;
                 long processed = 0;
+                int lineNumber = 0;
 
                 while ((line = br.readLine()) != null) {
                     processed++;
+                    lineNumber++;
+
+                    // Показываем прогресс каждые 10000 строк
+                    if (processed % 10000 == 0) {
+                        System.out.println("Обработано строк: " + processed +
+                                ", добавлено записей: " + count +
+                                ", пропущено: " + skipped);
+                    }
 
                     try {
                         java.util.regex.Matcher m = LOG_PATTERN.matcher(line);
-                        if (m.find()) {
-                            String rawTime = m.group(1);
-                            String ip = m.group(2);
-                            int statusCode = Integer.parseInt(m.group(4));
-                            String url = m.group(5);
-                            String username = m.group(6);
 
-                            if (username != null) {
+                        if (m.find()) {
+                            // ДЕБАГ: выводим первую найденную строку
+                            if (count == 0) {
+                                System.out.println("ПЕРВАЯ УСПЕШНО РАСПАРСЕННАЯ СТРОКА:");
+                                System.out.println("Строка: " + line);
+                                System.out.println("Группы:");
+                                for (int i = 1; i <= m.groupCount(); i++) {
+                                    System.out.println("  Группа " + i + ": '" + m.group(i) + "'");
+                                }
+                            }
+
+                            String rawTime = m.group(1);
+                            int responseTimeMs = Integer.parseInt(m.group(2));
+                            String ip = m.group(3);
+                            String actionStatus = m.group(4);
+                            int statusCode = Integer.parseInt(m.group(5));
+                            long responseSizeBytes = Long.parseLong(m.group(6));
+                            String httpMethod = m.group(7);
+                            String url = m.group(8);
+                            String username = m.group(9);
+                            String hierarchy = m.group(10);
+                            String contentType = m.group(11);
+
+                            if (username != null && !username.equals("-")) {
                                 username = username.trim();
-                                if (!username.isEmpty() && !username.equals("-")) {
+                                if (!username.isEmpty()) {
                                     if (isValidUsername(username)) {
                                         LocalDateTime dateTime = convertTimestamp(rawTime);
                                         if (dateTime != null) {
@@ -156,16 +193,19 @@ public class LogParsingService {
                                             ps.setString(4, url);
                                             ps.setInt(5, statusCode);
                                             ps.setString(6, domain);
+                                            ps.setInt(7, responseTimeMs);
+                                            ps.setLong(8, responseSizeBytes);
+
                                             ps.addBatch();
                                             count++;
 
                                             if (count % batchSize == 0) {
                                                 ps.executeBatch();
-                                                // Обновляем прогресс
-                                                currentStatus.processed = processed;
-                                                currentStatus.progress = (processed * 100.0) / totalLines;
-                                                currentStatus.status = String.format("Обработано: %,d строк", processed);
+                                                System.out.println("Выполнен batch из " + batchSize + " записей");
                                             }
+                                        } else {
+                                            System.out.println("ОШИБКА: Не удалось преобразовать timestamp: " + rawTime);
+                                            skipped++;
                                         }
                                     } else {
                                         filteredByUsername++;
@@ -173,71 +213,99 @@ public class LogParsingService {
                                 }
                             }
                         } else {
+                            // ДЕБАГ: выводим первую НЕраспарсенную строку
+                            if (skipped == 0) {
+                                System.out.println("ПЕРВАЯ НЕРАСПАРСЕННАЯ СТРОКА:");
+                                System.out.println("Строка: " + line);
+                                System.out.println("Длина строки: " + line.length());
+                            }
                             skipped++;
                         }
                     } catch (Exception e) {
+                        // ДЕБАГ: выводим первую ошибку парсинга
+                        if (skipped == 0) {
+                            System.out.println("ПЕРВАЯ ОШИБКА ПАРСИНГА в строке " + lineNumber + ":");
+                            System.out.println("Строка: " + line);
+                            System.out.println("Ошибка: " + e.getMessage());
+                            e.printStackTrace();
+                        }
                         skipped++;
                     }
 
-                    // Обновляем прогресс каждые 10000 строк
-                    if (processed % 10000 == 0) {
-                        currentStatus.processed = processed;
-                        currentStatus.progress = (processed * 100.0) / totalLines;
-                        currentStatus.status = String.format("Обработано: %,d из %,d строк (%.1f%%)",
-                                processed, totalLines, currentStatus.progress);
-                    }
-                    // Выводим в лог каждые 500к строк
-                    if (processed % 500000 == 0) {
-                        System.out.println(currentStatus.status);
-                    }
+                    // Обновляем прогресс
+                    currentStatus.processed = processed;
+                    currentStatus.progress = (processed * 100.0) / totalLines;
                 }
 
                 // Вставляем остатки
                 if (count % batchSize != 0) {
                     ps.executeBatch();
+                    System.out.println("Выполнен финальный batch из " + (count % batchSize) + " записей");
                 }
 
-                // 6. Финализируем таблицу и создаем индексы
-                currentStatus.status = "Создание индексов...";
-                currentStatus.progress = 95;
-                System.out.println("Финализация таблицы...");
-                finalizeTable(conn);
+                System.out.println("Парсинг завершен. Статистика:");
+                System.out.println("  Всего строк в файле: " + processed);
+                System.out.println("  Успешно распарсено: " + count);
+                System.out.println("  Отфильтровано по username: " + filteredByUsername);
+                System.out.println("  Пропущено (ошибки): " + skipped);
 
-                currentStatus.status = "Создание индексов...";
-                currentStatus.progress = 97;
-                System.out.println("Создание индексов...");
-                createIndexes(conn);
+                if (count == 0) {
+                    System.out.println("ВНИМАНИЕ: Не добавлено ни одной записи в БД!");
+                    System.out.println("Возможные причины:");
+                    System.out.println("1. Неверный формат логов");
+                    System.out.println("2. Неправильное регулярное выражение");
+                    System.out.println("3. Все имена пользователей отфильтрованы");
+                }
 
-                // 7. Обновляем статистику
-                currentStatus.status = "Обновление статистики...";
-                currentStatus.progress = 99;
-                System.out.println("Обновление статистики...");
-                updateStatistics(conn);
+                // Продолжаем финализацию только если есть данные
+                if (count > 0) {
+                    // 6. Финализируем таблицу
+                    System.out.println("Финализация таблицы...");
+                    currentStatus.progress = 95;
+                    finalizeTable(conn);
 
-                // Завершение
-                long endTime = System.currentTimeMillis();
-                double totalSeconds = (endTime - startTime) / 1000.0;
+                    // 7. Создаем индексы
+                    System.out.println("Создание индексов...");
+                    currentStatus.progress = 97;
+                    createIndexes(conn);
 
-                currentStatus.isParsing = false;
-                currentStatus.status = String.format(
-                        "✅ Парсинг завершен за %.1f мин\n" +
-                                "Обработано: %,d строк\n" +
-                                "Добавлено: %,d записей",
-                        totalSeconds / 60, processed, count
-                );
-                currentStatus.progress = 100;
-                currentStatus.processed = totalLines;
+                    // 8. Обновляем статистику
+                    System.out.println("Обновление статистики...");
+                    currentStatus.progress = 99;
+                    updateStatistics(conn);
 
-                System.out.printf("Парсинг завершен за %.1f минут%n", totalSeconds / 60);
-                System.out.printf("Добавлено: %,d записей%n", count);
-                System.out.printf("Отфильтровано: %,d%n", filteredByUsername);
-                System.out.printf("Пропущено: %,d строк%n", skipped);
+                    // Завершение
+                    long endTime = System.currentTimeMillis();
+                    double totalSeconds = (endTime - startTime) / 1000.0;
+
+                    currentStatus.isParsing = false;
+                    currentStatus.status = String.format(
+                            "✅ Парсинг завершен за %.1f мин\n" +
+                                    "Обработано: %,d строк\n" +
+                                    "Добавлено: %,d записей",
+                            totalSeconds / 60, processed, count
+                    );
+                    currentStatus.progress = 100;
+
+                    System.out.printf("Парсинг успешно завершен за %.1f минут%n", totalSeconds / 60);
+
+                } else {
+                    // Если данных нет - просто завершаем
+                    currentStatus.isParsing = false;
+                    currentStatus.status = "❌ Не удалось добавить записи в БД. Проверьте формат логов.";
+                    currentStatus.progress = 100;
+                    System.out.println("Парсинг завершен без добавления записей в БД");
+                }
 
             } catch (Exception e) {
+                System.err.println("Ошибка чтения файла: " + e.getMessage());
+                e.printStackTrace();
                 throw new RuntimeException("Ошибка чтения файла: " + e.getMessage(), e);
             }
 
         } catch (Exception e) {
+            System.err.println("Ошибка парсинга: " + e.getMessage());
+            e.printStackTrace();
             throw new RuntimeException("Ошибка парсинга: " + e.getMessage(), e);
         }
     }
@@ -334,10 +402,8 @@ public class LogParsingService {
 
     private void createUnloggedTable(Connection conn) throws SQLException {
         try (Statement st = conn.createStatement()) {
-            // Удаляем временную таблицу если есть
             st.execute("DROP TABLE IF EXISTS logs_unlogged");
 
-            // Создаем UNLOGGED таблицу для быстрой вставки
             String createTableSQL = "CREATE UNLOGGED TABLE logs_unlogged (" +
                     "id BIGSERIAL PRIMARY KEY," +
                     "time TIMESTAMP NOT NULL," +
@@ -345,7 +411,9 @@ public class LogParsingService {
                     "username TEXT," +
                     "url TEXT," +
                     "status_code INT," +
-                    "domain TEXT" +
+                    "domain TEXT," +
+                    "response_time_ms INT," +
+                    "response_size_bytes BIGINT" +
                     ")";
             st.execute(createTableSQL);
         }
@@ -395,7 +463,9 @@ public class LogParsingService {
                     {"idx_logs_username", "CREATE INDEX idx_logs_username ON logs(username)"},
                     {"idx_logs_status", "CREATE INDEX idx_logs_status ON logs(status_code)"},
                     {"idx_logs_domain", "CREATE INDEX idx_logs_domain ON logs(domain)"},
-                    {"idx_logs_url_pattern", "CREATE INDEX idx_logs_url_pattern ON logs(url text_pattern_ops)"}
+                    {"idx_logs_url_pattern", "CREATE INDEX idx_logs_url_pattern ON logs(url text_pattern_ops)"},
+                    {"idx_logs_response_time", "CREATE INDEX idx_logs_response_time ON logs(response_time_ms) WHERE response_time_ms > 0"},
+                    {"idx_logs_response_size", "CREATE INDEX idx_logs_response_size ON logs(response_size_bytes) WHERE response_size_bytes > 0"}
             };
 
             // Проверяем существование каждого индекса перед созданием
@@ -430,10 +500,15 @@ public class LogParsingService {
             // Создаем материализованное представление
             System.out.println("Создание материализованного представления...");
             try {
-                st.execute("DROP MATERIALIZED VIEW IF EXISTS logs_daily_stats");
-                st.execute("CREATE MATERIALIZED VIEW logs_daily_stats AS " +
-                        "SELECT username, status_code, date_trunc('day', time) as day, count(*) as cnt " +
-                        "FROM logs GROUP BY username, status_code, day");
+                st.execute( "DROP MATERIALIZED VIEW IF EXISTS logs_daily_stats");
+                st.execute( "CREATE MATERIALIZED VIEW logs_daily_stats AS \n" +
+                                "SELECT username, status_code, \n" +
+                                "       date_trunc('day', time) as day, \n" +
+                                "       count(*) as cnt,\n" +
+                                "       AVG(response_time_ms) as avg_response_time,\n" +
+                                "       SUM(response_size_bytes) as total_traffic_bytes\n" +
+                                "FROM logs \n" +
+                                "GROUP BY username, status_code, day");
                 System.out.println("Материализованное представление создано");
             } catch (SQLException e) {
                 System.err.println("Ошибка создания материализованного представления: " + e.getMessage());
@@ -691,12 +766,56 @@ public class LogParsingService {
             stats.put("avg_response_time", 0);
             stats.put("total_traffic_mb", 0);
 
+            // 7. Среднее время ответа (только для записей с response_time_ms > 0)
+            String avgResponseTimeQuery = "SELECT AVG(response_time_ms) " + baseQuery +
+                    " AND response_time_ms > 0";
+            Double avgResponseTime = executeDoubleQuery(avgResponseTimeQuery);
+            stats.put("avg_response_time",
+                    avgResponseTime != null ? Math.round(avgResponseTime) : 0);
+
+            // 8. Общий трафик в МБ
+            String totalTrafficQuery = "SELECT COALESCE(SUM(response_size_bytes), 0) " + baseQuery;
+            Long totalTrafficBytes = executeLongQuery(totalTrafficQuery);
+            double totalTrafficMB = totalTrafficBytes != null ?
+                    totalTrafficBytes / (1024.0 * 1024.0) : 0;
+            stats.put("total_traffic_mb", Math.round(totalTrafficMB * 100.0) / 100.0);
+
         } catch (Exception e) {
             System.err.println("Ошибка получения статистики: " + e.getMessage());
             stats = getDefaultStats();
         }
 
         return stats;
+    }
+
+    private Double executeDoubleQuery(String sql) {
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+
+            if (rs.next()) {
+                return rs.getDouble(1);
+            }
+            return 0.0;
+        } catch (Exception e) {
+            System.err.println("Ошибка выполнения AVG запроса: " + e.getMessage());
+            return 0.0;
+        }
+    }
+
+    private Long executeLongQuery(String sql) {
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+
+            if (rs.next()) {
+                return rs.getLong(1);
+            }
+            return 0L;
+        } catch (Exception e) {
+            System.err.println("Ошибка выполнения SUM запроса: " + e.getMessage());
+            return 0L;
+        }
     }
     // Вспомогательный метод для выполнения COUNT запросов
     private Long executeCountQuery(String sql) {

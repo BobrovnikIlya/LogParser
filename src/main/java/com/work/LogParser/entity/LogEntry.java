@@ -16,6 +16,9 @@ public class LogEntry {
     private String url;
     private Integer statusCode;
     private String domain;
+    private Integer responseTimeMs;      // Время ответа в миллисекундах
+    private Long responseSizeBytes;      // Размер ответа в байтах
+    private String action;
 
     // Getters and Setters
     public Long getId() { return id; }
@@ -38,4 +41,13 @@ public class LogEntry {
 
     public String getDomain() { return domain; }
     public void setDomain(String domain) { this.domain = domain; }
+
+    public Integer getResponseTimeMs() { return responseTimeMs; }
+    public void setResponseTimeMs(Integer responseTimeMs) { this.responseTimeMs = responseTimeMs; }
+
+    public Long getResponseSizeBytes() { return responseSizeBytes; }
+    public void setResponseSizeBytes(Long responseSizeBytes) { this.responseSizeBytes = responseSizeBytes; }
+
+    public String getAction() { return action; }
+    public void setAction(String action) { this.action = action; }
 }
