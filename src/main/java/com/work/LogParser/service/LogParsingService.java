@@ -103,6 +103,7 @@ public class LogParsingService {
         System.out.println("Начало парсинга файла: " + filePath);
 
         try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
+            ensureLogsTableExists(conn);
             // 1. Проверяем нужно ли парсить
             if (!shouldParseLogs(conn, filePath)) {
                 System.out.println("Парсинг не требуется - данные актуальны");
@@ -331,7 +332,84 @@ public class LogParsingService {
             throw new RuntimeException("Ошибка парсинга: " + e.getMessage(), e);
         }
     }
+    private void ensureLogsTableExists(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            // Проверяем существование таблицы logs
+            boolean tableExists = false;
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'logs')")) {
+                if (rs.next()) {
+                    tableExists = rs.getBoolean(1);
+                }
+            }
 
+            if (!tableExists) {
+                System.out.println("Таблица logs не существует, создаем новую...");
+
+                // Создаем таблицу logs с полной структурой
+                String createTableSQL = "CREATE TABLE logs (" +
+                        "id BIGSERIAL PRIMARY KEY," +
+                        "time TIMESTAMP NOT NULL," +
+                        "ip TEXT," +
+                        "username TEXT," +
+                        "url TEXT," +
+                        "status_code INT," +
+                        "domain TEXT," +
+                        "response_time_ms INT," +
+                        "response_size_bytes BIGINT," +
+                        "action TEXT," +
+                        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                        ")";
+
+                stmt.execute(createTableSQL);
+                System.out.println("Таблица logs успешно создана");
+
+                // Сразу создаем базовые индексы
+                createBasicIndexes(conn);
+
+                // Создаем последовательность для id
+                stmt.execute("CREATE SEQUENCE IF NOT EXISTS logs_id_seq START 1");
+                System.out.println("Последовательность logs_id_seq создана");
+
+            } else {
+                System.out.println("Таблица logs уже существует");
+            }
+        } catch (SQLException e) {
+            System.err.println("Ошибка при создании/проверке таблицы logs: " + e.getMessage());
+            throw e;
+        }
+    }
+
+    private void createBasicIndexes(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            System.out.println("Создание базовых индексов для таблицы logs...");
+
+            // Создаем только самые важные индексы для начала
+            String[] indexQueries = {
+                    "CREATE INDEX IF NOT EXISTS idx_logs_time ON logs(time)",
+                    "CREATE INDEX IF NOT EXISTS idx_logs_ip ON logs(ip)",
+                    "CREATE INDEX IF NOT EXISTS idx_logs_username ON logs(username)",
+                    "CREATE INDEX IF NOT EXISTS idx_logs_status ON logs(status_code)",
+                    "CREATE INDEX IF NOT EXISTS idx_logs_domain ON logs(domain)",
+                    "CREATE INDEX IF NOT EXISTS idx_logs_action ON logs(action)"
+            };
+
+            for (String query : indexQueries) {
+                try {
+                    stmt.execute(query);
+                    System.out.println("Индекс создан: " + query.split(" ")[3]);
+                } catch (SQLException e) {
+                    // Если индекс уже существует, пропускаем
+                    if (e.getMessage().contains("already exists")) {
+                        System.out.println("Индекс уже существует: " + query.split(" ")[3]);
+                    } else {
+                        System.err.println("Ошибка создания индекса: " + e.getMessage());
+                    }
+                }
+            }
+            System.out.println("Базовые индексы созданы");
+        }
+    }
     // Вспомогательные методы (ваши оригинальные с небольшими изменениями)
     private long countLines(String filePath) throws Exception {
         long lines = 0;
@@ -360,6 +438,10 @@ public class LogParsingService {
                     return true;
                 }
             }
+        } catch (SQLException e) {
+            // Если произошла ошибка при проверке (например, таблицы нет)
+            System.out.println("Ошибка проверки БД, считаем что нужно парсить: " + e.getMessage());
+            return true;
         }
 
         // 2. Быстро проверяем первую запись из БД и первую из файла
@@ -418,7 +500,21 @@ public class LogParsingService {
 
     private void clearLogsTable(Connection conn) throws SQLException {
         try (Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate("TRUNCATE TABLE logs");
+            // Проверяем существование таблицы перед очисткой
+            boolean tableExists = false;
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'logs')")) {
+                if (rs.next()) {
+                    tableExists = rs.getBoolean(1);
+                }
+            }
+
+            if (tableExists) {
+                stmt.executeUpdate("TRUNCATE TABLE logs");
+                System.out.println("Таблица logs очищена");
+            } else {
+                System.out.println("Таблица logs не существует, очистка не требуется");
+            }
         }
     }
 
@@ -686,8 +782,12 @@ public class LogParsingService {
                 where.append(" AND action = '").append(action).append("'");
             }
             // Получаем данные
-            String sql = "SELECT id, time, ip, username, url, status_code as statusCode, domain, " +
-                    "response_time_ms as responseTime, response_size_bytes as responseSize, action " +
+            String sql = "SELECT id, time, ip, username, url, " +
+                    "status_code as statusCode, " +           // statusCode
+                    "domain, " +
+                    "response_time_ms as responseTime, " +    // responseTime
+                    "response_size_bytes as responseSize, " + // responseSize
+                    "action " +                               // action
                     "FROM logs " + where + " ORDER BY time DESC LIMIT " + size + " OFFSET " + offset;
 
             List<Map<String, Object>> logs = jdbcTemplate.queryForList(sql);
@@ -875,9 +975,20 @@ public class LogParsingService {
 
     public boolean hasDataInDatabase() {
         try {
+            // Сначала проверяем существование таблицы
+            Boolean tableExists = jdbcTemplate.queryForObject(
+                    "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'logs')",
+                    Boolean.class
+            );
+
+            if (tableExists == null || !tableExists) {
+                return false;
+            }
+
             Long count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM logs LIMIT 1", Long.class);
             return count != null && count > 0;
         } catch (Exception e) {
+            System.err.println("Ошибка проверки наличия данных: " + e.getMessage());
             return false;
         }
     }

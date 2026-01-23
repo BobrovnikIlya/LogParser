@@ -259,18 +259,27 @@ function displayLogs(logs) {
     logs.forEach(log => {
         const row = document.createElement('tr');
         
+        // Проверяем наличие полей (debug)
+        console.log("LOG entry:", log);
+        
         const statusClass = `status-${Math.floor(log.statusCode / 100) * 100}`;
-        const sizeKB = (log.responseSize / 1024).toFixed(2);
+        
+        // ПРАВИЛЬНО вычисляем размер в КБ
+        const responseSizeBytes = log.responseSize || 0;
+        const sizeKB = (responseSizeBytes / 1024).toFixed(2);
+        
+        // Проверяем время ответа
+        const responseTimeMs = log.responseTime || 0;
+        
         const displayUrl = log.url.length > 50 ? log.url.substring(0, 50) + '...' : log.url;
         
-        // В функции displayLogs():
         row.innerHTML = `
             <td>${new Date(log.time).toLocaleString()}</td>
             <td>${log.ip}</td>
             <td>${log.username || ''}</td>
             <td class="${statusClass}">${log.statusCode}</td>
-            <td>${log.action || 'N/A'}</td>  <!-- УЖЕ ЕСТЬ В КОДЕ! -->
-            <td>${log.responseTime || 0}мс</td>
+            <td>${log.action || 'N/A'}</td>
+            <td>${responseTimeMs}мс</td>
             <td>${sizeKB} КБ</td>
             <td title="${log.url}">${displayUrl}</td>
             <td>${log.domain || 'N/A'}</td>
