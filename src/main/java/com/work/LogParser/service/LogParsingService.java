@@ -32,15 +32,15 @@ public class LogParsingService {
     private static final Pattern LOG_PATTERN = Pattern.compile(
             "^" +
                     "(\\d+\\.\\d+)\\s+" +              // 1. timestamp
-                    "(\\d+)\\s+" +                     // 2. Время ответа (мс)
-                    "(\\d+\\.\\d+\\.\\d+\\.\\d+)\\s+" + // 3. IP клиента
-                    "(\\S+)/(\\d+)\\s+" +              // 4. Действие/статус (TCP_TUNNEL/200)
-                    "(\\d+)\\s+" +                     // 5. Размер ответа (байты)
-                    "(\\S+)\\s+" +                     // 6. HTTP метод (CONNECT/GET)
-                    "(\\S+)\\s+" +                     // 7. URL (domain:port или http://...)
-                    "(\\S+|-)\\s+" +                   // 8. Имя пользователя или "-"
-                    "(\\S+)\\s+" +                     // 9. Иерархия (HIER_DIRECT/...)
-                    "(\\S+)"                           // 10. Content-Type (text/html и т.д.)
+                    "(\\d+)\\s+" +                     // 2. response_time_ms
+                    "(\\d+\\.\\d+\\.\\d+\\.\\d+)\\s+" + // 3. client_ip
+                    "([A-Z_]+)(?:/(\\d{3}))?\\s+" +    // 4. action и 5. status_code (опционально)
+                    "(\\d+)\\s+" +                     // 6. response_size_bytes
+                    "(\\S+)\\s+" +                     // 7. http_method
+                    "(\\S+)\\s+" +                     // 8. url
+                    "(\\S+|-)\\s+" +                   // 9. username
+                    "(\\S+)\\s+" +                     // 10. hierarchy
+                    "(\\S+)"                           // 11. content_type
     );
     private static final Pattern USERNAME_PATTERN = Pattern.compile(
             "^(.*_.*_.*|.*user.*)$", Pattern.CASE_INSENSITIVE
@@ -161,29 +161,26 @@ public class LogParsingService {
                             String rawTime = m.group(1);
                             int responseTimeMs = Integer.parseInt(m.group(2));
                             String ip = m.group(3);
-                            String actionStatus = m.group(4);
+                            String action = m.group(4);           // Действие (TCP_TUNNEL, TCP_MISS и т.д.)
+                            String statusStr = m.group(5);        // Код статуса (может быть null)
 
-                            String action = "";
                             int statusCode = 0;
-
                             try {
-                                String[] parts = actionStatus.split("/");
-                                if (parts.length >= 2) {
-                                    action = parts[0];           // "TCP_REFRESH_MODIFIED"
-                                    statusCode = Integer.parseInt(parts[1]);  // 200
+                                if (statusStr != null && !statusStr.isEmpty()) {
+                                    statusCode = Integer.parseInt(statusStr);
                                 } else {
-                                    // Если нет "/", пробуем извлечь статус из строки
-                                    action = actionStatus;
-                                    // Пытаемся найти цифры в строке
-                                    java.util.regex.Matcher numMatcher = Pattern.compile("\\d{3}").matcher(actionStatus);
-                                    if (numMatcher.find()) {
-                                        statusCode = Integer.parseInt(numMatcher.group());
+                                    // Если статус не указан, пытаемся определить по дейаствию
+                                    if (action.contains("DENIED") || action.contains("DENY")) {
+                                        statusCode = 403;
+                                    } else if (action.contains("MISS")) {
+                                        statusCode = 200; // Предполагаем успех для MISS
+                                    } else if (action.contains("HIT")) {
+                                        statusCode = 200;
                                     }
                                 }
                             } catch (Exception e) {
-                                System.err.println("Ошибка разбора action/status: " + actionStatus);
+                                System.err.println("Ошибка парсинга статуса: " + statusStr);
                                 statusCode = 0;
-                                action = actionStatus;
                             }
 
                             long responseSizeBytes = Long.parseLong(m.group(6));
@@ -782,15 +779,68 @@ public class LogParsingService {
                 where.append(" AND action = '").append(action).append("'");
             }
             // Получаем данные
-            String sql = "SELECT id, time, ip, username, url, " +
-                    "status_code as statusCode, " +           // statusCode
+            String sql = "SELECT " +
+                    "id, " +
+                    "time, " +
+                    "ip, " +
+                    "username, " +
+                    "url, " +
+                    "COALESCE(status_code, 0) as statusCode, " +           // statusCode с заменой NULL на 0
                     "domain, " +
-                    "response_time_ms as responseTime, " +    // responseTime
-                    "response_size_bytes as responseSize, " + // responseSize
-                    "action " +                               // action
+                    "COALESCE(response_time_ms, 0) as responseTime, " +    // responseTime с заменой NULL на 0
+                    "COALESCE(response_size_bytes, 0) as responseSize, " + // responseSize с заменой NULL на 0
+                    "action " +
                     "FROM logs " + where + " ORDER BY time DESC LIMIT " + size + " OFFSET " + offset;
 
+            System.out.println("SQL запрос для логов: " + sql);
             List<Map<String, Object>> logs = jdbcTemplate.queryForList(sql);
+
+            for (Map<String, Object> log : logs) {
+                // Приводим статус к Integer
+                Object statusc = log.get("statusCode");
+                if (statusc != null) {
+                    try {
+                        log.put("statusCode", ((Number) statusc).intValue());
+                    } catch (Exception e) {
+                        log.put("statusCode", 0);
+                    }
+                } else {
+                    log.put("statusCode", 0);
+                }
+
+                // Приводим время ответа к Integer
+                Object responseTime = log.get("responseTime");
+                if (responseTime != null) {
+                    try {
+                        log.put("responseTime", ((Number) responseTime).intValue());
+                    } catch (Exception e) {
+                        log.put("responseTime", 0);
+                    }
+                } else {
+                    log.put("responseTime", 0);
+                }
+
+                // Приводим размер ответа к Long
+                Object responseSize = log.get("responseSize");
+                if (responseSize != null) {
+                    try {
+                        log.put("responseSize", ((Number) responseSize).longValue());
+                    } catch (Exception e) {
+                        log.put("responseSize", 0L);
+                    }
+                } else {
+                    log.put("responseSize", 0L);
+                }
+            }
+
+            if (!logs.isEmpty()) {
+                System.out.println("Первая запись лога (поля): " + logs.get(0).keySet());
+                System.out.println("Первая запись лога (значения):");
+                for (Map.Entry<String, Object> entry : logs.get(0).entrySet()) {
+                    System.out.println("  " + entry.getKey() + ": " + entry.getValue() +
+                            " (тип: " + (entry.getValue() != null ? entry.getValue().getClass().getName() : "null") + ")");
+                }
+            }
 
             // Общее количество
             String countSql = "SELECT COUNT(*) FROM logs " + where;

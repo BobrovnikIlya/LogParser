@@ -9,7 +9,6 @@ let parsingInterval = null;
 let selectedFile = null;
 let startTime = null; // используется для оценки оставшегося времени
 const totalStages = 4; // используется в updateProgress
-
 // Глобальные переменные для управления запросами
 let isRequestInProgress = false;
 let currentAbortController = null;
@@ -26,6 +25,20 @@ const API_ENDPOINTS = {
     PARSING_STATUS: '/api/parsing-status',
     CHECK_FILE: '/api/check-file',  // Добавляем новый endpoint
     CHECK_DATA: '/api/check-data'
+};
+
+// Конфигурация порогов
+const THRESHOLDS = {
+    TIME: {
+        MILLISECONDS: 9999, // до 10 секунд показываем в мс
+        SECONDS: 59999,     // до 1 минуты показываем в секундах
+        MINUTES: 3599999    // до 1 часа показываем в минутах
+    },
+    SIZE: {
+        KB: 9999,           // до 10 КБ показываем в КБ
+        MB: 10485759,       // до 10 МБ показываем в МБ
+        // больше 10 МБ показываем в ГБ
+    }
 };
 
 // Utility functions
@@ -259,29 +272,30 @@ function displayLogs(logs) {
     logs.forEach(log => {
         const row = document.createElement('tr');
         
-        // Проверяем наличие полей (debug)
-        console.log("LOG entry:", log);
-        
         const statusClass = `status-${Math.floor(log.statusCode / 100) * 100}`;
         
-        // ПРАВИЛЬНО вычисляем размер в КБ
-        const responseSizeBytes = log.responseSize || 0;
-        const sizeKB = (responseSizeBytes / 1024).toFixed(2);
+        // Форматируем время ответа
+        const responseTime = log.responseTime || 0;
+        const formattedResponseTime = formatResponseTime(responseTime);
         
-        // Проверяем время ответа
-        const responseTimeMs = log.responseTime || 0;
+        // Форматируем размер ответа
+        const responseSize = log.responseSize || 0;
+        const formattedResponseSize = formatResponseSize(responseSize);
         
-        const displayUrl = log.url.length > 50 ? log.url.substring(0, 50) + '...' : log.url;
+        // Обрезаем URL для отображения
+        const displayUrl = log.url && log.url.length > 50 ? 
+            log.url.substring(0, 50) + '...' : 
+            (log.url || '');
         
         row.innerHTML = `
             <td>${new Date(log.time).toLocaleString()}</td>
-            <td>${log.ip}</td>
+            <td>${log.ip || ''}</td>
             <td>${log.username || ''}</td>
-            <td class="${statusClass}">${log.statusCode}</td>
+            <td class="${statusClass}">${log.statusCode || 0}</td>
             <td>${log.action || 'N/A'}</td>
-            <td>${responseTimeMs}мс</td>
-            <td>${sizeKB} КБ</td>
-            <td title="${log.url}">${displayUrl}</td>
+            <td title="Точное значение: ${responseTime} мс">${formattedResponseTime}</td>
+            <td title="Точное значение: ${responseSize} байт">${formattedResponseSize}</td>
+            <td title="${log.url || ''}">${displayUrl}</td>
             <td>${log.domain || 'N/A'}</td>
         `;
         
@@ -293,12 +307,92 @@ function displayLogs(logs) {
     document.getElementById('logsTable').style.display = 'table';
 }
 
+// Улучшенная функция для форматирования времени ответа
+function formatResponseTime(ms) {
+    if (!ms || ms <= 0) return '0 мс';
+    
+    // Более читаемая версия с порогами
+    if (ms <= THRESHOLDS.TIME.MILLISECONDS) {
+        // Меньше 10 секунд - миллисекунды
+        return ms + ' мс';
+    } else if (ms <= THRESHOLDS.TIME.SECONDS) {
+        // Меньше 1 минуты - секунды
+        const seconds = ms / 1000;
+        return seconds < 10 ? 
+            seconds.toFixed(1) + ' сек' : 
+            Math.round(seconds) + ' сек';
+    } else if (ms <= THRESHOLDS.TIME.MINUTES) {
+        // Меньше 1 часа - минуты:секунды
+        const seconds = ms / 1000;
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = Math.round(seconds % 60);
+        return `${minutes}:${remainingSeconds.toString().padStart(2, '0')} мин`;
+    } else {
+        // Больше 1 часа - часы:минуты
+        const hours = Math.floor(ms / 3600000);
+        const minutes = Math.round((ms % 3600000) / 60000);
+        return `${hours} ч ${minutes} мин`;
+    }
+}
+
+// Улучшенная функция для форматирования размера ответа
+function formatResponseSize(bytes) {
+    if (!bytes || bytes <= 0) return '0 КБ';
+    
+    const kb = bytes / 1024;
+    
+    if (bytes <= THRESHOLDS.SIZE.KB) {
+        // Меньше 10 КБ - КБ с двумя знаками
+        return kb.toFixed(2) + ' КБ';
+    } else if (bytes <= THRESHOLDS.SIZE.MB) {
+        // Меньше 10 МБ - МБ
+        const mb = kb / 1024;
+        if (mb < 1) {
+            // От 10 КБ до 1 МБ
+            return mb.toFixed(2) + ' МБ';
+        } else if (mb < 10) {
+            // От 1 МБ до 10 МБ
+            return mb.toFixed(1) + ' МБ';
+        } else {
+            // От 10 МБ до 10 ГБ
+            return Math.round(mb) + ' МБ';
+        }
+    } else {
+        // Больше 10 МБ - ГБ
+        const gb = bytes / (1024 * 1024 * 1024);
+        return gb.toFixed(2) + ' ГБ';
+    }
+}
+
 function updateStats(stats) {
     document.getElementById('totalRequests').textContent = stats.total_requests.toLocaleString();
     document.getElementById('errorRequests').textContent = stats.error_requests.toLocaleString();
-    document.getElementById('avgResponseTime').textContent = stats.avg_response_time.toLocaleString();
+    
+    // Форматируем среднее время ответа
+    const avgTime = stats.avg_response_time || 0;
+    document.getElementById('avgResponseTime').textContent = formatResponseTime(avgTime);
+    
     document.getElementById('uniqueIps').textContent = stats.unique_ips.toLocaleString();
-    document.getElementById('totalTraffic').textContent = stats.total_traffic_mb.toLocaleString();
+    
+    // Форматируем общий трафик
+    const totalTraffic = stats.total_traffic_mb || 0;
+    document.getElementById('totalTraffic').textContent = formatTrafficMB(totalTraffic);
+}
+
+// Функция для форматирования трафика в МБ
+function formatTrafficMB(mb) {
+    if (!mb || mb <= 0) return '0 МБ';
+    
+    if (mb < 1024) {
+        // Меньше 1 ГБ
+        return mb < 100 ? 
+            mb.toFixed(1) + ' МБ' : 
+            Math.round(mb) + ' МБ';
+    } else {
+        // Больше 1 ГБ
+        const gb = mb / 1024;
+        return gb.toFixed(1) + ' ГБ';
+    }
 }
 
 function updatePagination(total, current) {
