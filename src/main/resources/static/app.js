@@ -95,6 +95,7 @@ async function loadStatuses() {
 
         if (data.success && data.statuses) {
             const statusSelect = document.getElementById('status');
+            data.statuses.sort((a, b) => a - b);
             if (statusSelect) {
                 // Сохраняем текущее значение
                 const currentValue = statusSelect.value;
