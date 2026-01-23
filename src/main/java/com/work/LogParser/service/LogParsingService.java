@@ -104,6 +104,9 @@ public class LogParsingService {
 
         try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
             ensureLogsTableExists(conn);
+            createStatusesTable(conn);
+            createActionsTable(conn);
+
             // 1. Проверяем нужно ли парсить
             if (!shouldParseLogs(conn, filePath)) {
                 System.out.println("Парсинг не требуется - данные актуальны");
@@ -222,6 +225,7 @@ public class LogParsingService {
                                             if (statusCode > 0) {
                                                 saveStatusIfNotExists(conn, statusCode);
                                             }
+                                            saveActionIfNotExists(conn, action);
 
                                             if (count % batchSize == 0) {
                                                 ps.executeBatch();
@@ -1187,7 +1191,7 @@ public class LogParsingService {
                 // Fallback: берем из logs
                 String sql = "SELECT DISTINCT status_code FROM logs " +
                         "WHERE status_code IS NOT NULL AND status_code > 0 " +
-                        "ORDER BY status_code";
+                        "ORDER BY status_code ASC";
                 try (PreparedStatement ps = conn.prepareStatement(sql);
                      ResultSet rs = ps.executeQuery()) {
 
@@ -1202,5 +1206,117 @@ public class LogParsingService {
         }
 
         return statuses;
+    }
+
+    private void createActionsTable(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            // Проверяем существование таблицы
+            boolean tableExists = false;
+            try (ResultSet rs = stmt.executeQuery(
+                    "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'log_actions')")) {
+                if (rs.next()) {
+                    tableExists = rs.getBoolean(1);
+                }
+            }
+
+            if (!tableExists) {
+                // Создаем простую таблицу только для хранения уникальных actions
+                String createSQL = "CREATE TABLE log_actions (" +
+                        "action TEXT PRIMARY KEY," +
+                        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                        ")";
+                stmt.execute(createSQL);
+                System.out.println("Таблица log_actions создана");
+
+                // Создаем индекс для быстрого поиска
+                stmt.execute("CREATE INDEX idx_log_actions_action ON log_actions(action)");
+            }
+        }
+    }
+
+    private void addBasicActions(Connection conn) throws SQLException {
+        String[][] basicActions = {
+                {"TCP_TUNNEL", "Туннельное TCP соединение"},
+                {"TCP_MISS", "Пропущенный TCP запрос (не найден в кэше)"},
+                {"TCP_HIT", "Успешный TCP запрос (найден в кэше)"},
+                {"TCP_DENIED", "Отклоненный TCP запрос"},
+                {"TCP_REFRESH", "Обновление TCP кэша"},
+                {"TCP_CLIENT_REFRESH", "Клиентское обновление TCP"},
+                {"TCP_REF_FAIL", "Ошибка обновления TCP"},
+                {"UDP_HIT", "Успешный UDP запрос"},
+                {"UDP_MISS", "Пропущенный UDP запрос"},
+                {"UDP_DENIED", "Отклоненный UDP запрос"},
+                {"NONE", "Нет действия"},
+                {"ERR_", "Ошибка (различные типы)"}
+        };
+
+        String sql = "INSERT INTO log_actions (action, description) VALUES (?, ?) " +
+                "ON CONFLICT (action) DO NOTHING";
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (String[] action : basicActions) {
+                ps.setString(1, action[0]);
+                ps.setString(2, action[1]);
+                ps.addBatch();
+            }
+            ps.executeBatch();
+            System.out.println("Базовые actions добавлены");
+        }
+    }
+
+    private void saveActionIfNotExists(Connection conn, String action) throws SQLException {
+        if (action == null || action.isEmpty() || action.equals("-")) return;
+
+        String sql = "INSERT INTO log_actions (action) VALUES (?) " +
+                "ON CONFLICT (action) DO NOTHING";
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, action.trim());
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            // Игнорируем если таблицы нет или другие не критичные ошибки
+            System.err.println("Не удалось сохранить action '" + action + "': " + e.getMessage());
+        }
+    }
+
+    public List<String> getAvailableActions() {
+        List<String> actions = new ArrayList<>();
+
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
+            // Пробуем получить из таблицы actions
+            boolean hasActionsTable = false;
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(
+                         "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'log_actions')")) {
+                if (rs.next()) {
+                    hasActionsTable = rs.getBoolean(1);
+                }
+            }
+
+            String sql;
+            if (hasActionsTable) {
+                sql = "SELECT action FROM log_actions ORDER BY action";
+            } else {
+                sql = "SELECT DISTINCT action FROM logs " +
+                        "WHERE action IS NOT NULL AND action != '' AND action != '-' " +
+                        "ORDER BY action";
+            }
+
+            try (PreparedStatement ps = conn.prepareStatement(sql);
+                 ResultSet rs = ps.executeQuery()) {
+
+                while (rs.next()) {
+                    String action = rs.getString(1);
+                    if (action != null && !action.trim().isEmpty()) {
+                        actions.add(action.trim());
+                    }
+                }
+            }
+
+        } catch (SQLException e) {
+            System.err.println("Ошибка получения списка actions: " + e.getMessage());
+        }
+
+        return actions;
     }
 }

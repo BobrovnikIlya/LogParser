@@ -25,7 +25,8 @@ const API_ENDPOINTS = {
     PARSING_STATUS: '/api/parsing-status',
     CHECK_FILE: '/api/check-file',  // Добавляем новый endpoint
     CHECK_DATA: '/api/check-data',
-    STATUSES: '/api/statuses'
+    STATUSES: '/api/statuses',
+    ACTIONS: '/api/actions'
 };
 
 // Конфигурация порогов
@@ -53,6 +54,40 @@ function showNotification(message, isError = true) {
         notification.style.display = 'none';
     }, 3000);
 }
+
+async function loadActions() {
+    try {
+        const response = await fetch(API_ENDPOINTS.ACTIONS);
+        const data = await response.json();
+
+        if (data.success && data.actions) {
+            const actionSelect = document.getElementById('action');
+            if (actionSelect) {
+                // Сохраняем текущее значение
+                const currentValue = actionSelect.value;
+
+                // Очищаем опции кроме первой
+                actionSelect.innerHTML = '<option value="">Все</option>';
+
+                // Добавляем actions (только значения)
+                data.actions.forEach(action => {
+                    const option = document.createElement('option');
+                    option.value = action;
+                    option.textContent = action;
+                    actionSelect.appendChild(option);
+                });
+
+                // Восстанавливаем выбранное значение
+                if (currentValue && Array.from(actionSelect.options).some(opt => opt.value === currentValue)) {
+                    actionSelect.value = currentValue;
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки actions:', error);
+    }
+}
+
 async function loadStatuses() {
     try {
         const response = await fetch(API_ENDPOINTS.STATUSES);
@@ -93,6 +128,7 @@ function getFilters() {
         clientIp: document.getElementById('clientIp').value,
         username: document.getElementById('username').value,
         status: document.getElementById('status').value,
+        action: document.getElementById('action').value,
         search: document.getElementById('search').value
     };
 }
@@ -962,6 +998,7 @@ function updateParsingUI(status) {
             // Перезагружаем статусы после парсинга
             setTimeout(() => {
                 loadStatuses();
+                loadActions();
                 loadData(); // существующий вызов
             }, 500);
         }
@@ -1619,6 +1656,7 @@ function initializeAppWithStatus() {
     applySavedTheme();
     setupSorting();
     loadStatuses();
+    loadActions();
 
     // Добавляем обработчики событий
     document.addEventListener('keydown', handleEscapeKey);

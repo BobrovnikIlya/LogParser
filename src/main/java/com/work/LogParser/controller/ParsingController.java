@@ -272,7 +272,7 @@ public class ParsingController {
                     // Если таблицы нет, берем из logs напрямую
                     String sql = "SELECT DISTINCT status_code FROM logs " +
                             "WHERE status_code IS NOT NULL AND status_code > 0 " +
-                            "ORDER BY status_code";
+                            "ORDER BY status_code ASC";
 
                     try (PreparedStatement ps = conn.prepareStatement(sql);
                          ResultSet rs = ps.executeQuery()) {
@@ -296,6 +296,66 @@ public class ParsingController {
                     "success", false,
                     "error", "Ошибка получения статусов",
                     "statuses", new ArrayList<>(),
+                    "count", 0
+            ));
+        }
+    }
+
+    @GetMapping("/actions")
+    public ResponseEntity<?> getActions() {
+        try {
+            List<String> actions = new ArrayList<>();
+
+            String DB_URL = "jdbc:postgresql://localhost:5432/ParserLog";
+            String DB_USERNAME = "postgres";
+            String DB_PASSWORD = "uthgb123";
+
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
+                // Сначала проверяем существование таблицы
+                boolean tableExists = false;
+                try (Statement stmt = conn.createStatement();
+                     ResultSet rs = stmt.executeQuery(
+                             "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'log_actions')")) {
+                    if (rs.next()) {
+                        tableExists = rs.getBoolean(1);
+                    }
+                }
+
+                String sql;
+                if (tableExists) {
+                    // Получаем actions из таблицы
+                    sql = "SELECT action FROM log_actions ORDER BY action";
+                } else {
+                    // Если таблицы нет, берем из logs напрямую
+                    sql = "SELECT DISTINCT action FROM logs " +
+                            "WHERE action IS NOT NULL AND action != '' " +
+                            "ORDER BY action";
+                }
+
+                try (PreparedStatement ps = conn.prepareStatement(sql);
+                     ResultSet rs = ps.executeQuery()) {
+
+                    while (rs.next()) {
+                        String action = rs.getString("action");
+                        if (action != null && !action.trim().isEmpty()) {
+                            actions.add(action.trim());
+                        }
+                    }
+                }
+            }
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "actions", actions,
+                    "count", actions.size()
+            ));
+
+        } catch (Exception e) {
+            System.err.println("Ошибка получения actions: " + e.getMessage());
+            return ResponseEntity.ok(Map.of(
+                    "success", false,
+                    "error", "Ошибка получения actions",
+                    "actions", new ArrayList<>(),
                     "count", 0
             ));
         }
