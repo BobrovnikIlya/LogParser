@@ -291,7 +291,7 @@ public class LogFileParser {
         return lines;
     }
 
-    private boolean shouldParseLogs(Connection conn, String filePath) throws SQLException {
+    private boolean shouldParseLogs(Connection conn, String filePath) {
         System.out.println("Быстрая проверка актуальности...");
 
         // 1. Проверяем есть ли данные в БД

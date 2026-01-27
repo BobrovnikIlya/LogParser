@@ -210,14 +210,15 @@ public class DatabaseManager {
             System.out.println("Создание материализованного представления...");
             try {
                 st.execute( "DROP MATERIALIZED VIEW IF EXISTS logs_daily_stats");
-                st.execute( "CREATE MATERIALIZED VIEW logs_daily_stats AS \n" +
-                        "SELECT username, status_code, \n" +
-                        "       date_trunc('day', time) as day, \n" +
-                        "       count(*) as cnt,\n" +
-                        "       AVG(response_time_ms) as avg_response_time,\n" +
-                        "       SUM(response_size_bytes) as total_traffic_bytes\n" +
-                        "FROM logs \n" +
-                        "GROUP BY username, status_code, day");
+                st.execute("""
+                        CREATE MATERIALIZED VIEW logs_daily_stats AS\s
+                        SELECT username, status_code,\s
+                               date_trunc('day', time) as day,\s
+                               count(*) as cnt,
+                               AVG(response_time_ms) as avg_response_time,
+                               SUM(response_size_bytes) as total_traffic_bytes
+                        FROM logs\s
+                        GROUP BY username, status_code, day""");
                 System.out.println("Материализованное представление создано");
             } catch (SQLException e) {
                 System.err.println("Ошибка создания материализованного представления: " + e.getMessage());
@@ -287,7 +288,7 @@ public class DatabaseManager {
         }
     }
 
-    public void saveStatusIfNotExists(Connection conn, int statusCode) throws SQLException {
+    public void saveStatusIfNotExists(Connection conn, int statusCode) {
         if (statusCode <= 0) return;
 
         String sql = "INSERT INTO log_statuses (status_code) VALUES (?) " +
@@ -328,7 +329,7 @@ public class DatabaseManager {
         }
     }
 
-    public void saveActionIfNotExists(Connection conn, String action) throws SQLException {
+    public void saveActionIfNotExists(Connection conn, String action) {
         if (action == null || action.isEmpty() || action.equals("-")) return;
 
         String sql = "INSERT INTO log_actions (action) VALUES (?) " +
