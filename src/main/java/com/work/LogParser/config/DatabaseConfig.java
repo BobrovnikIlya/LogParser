@@ -9,6 +9,10 @@ import javax.sql.DataSource;
 @Configuration
 public class DatabaseConfig {
 
+    public static final String DB_URL = "jdbc:postgresql://localhost:5432/ParserLog";
+    public static final String DB_USERNAME = "postgres";
+    public static final String DB_PASSWORD = "uthgb123";
+
     @Bean
     public JdbcTemplate jdbcTemplate(DataSource dataSource) {
         JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
