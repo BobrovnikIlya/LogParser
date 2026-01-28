@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Анализатор Proxy Логов</title>
-    <link rel="stylesheet" href="style.css?v=1.2">
-    <link rel="stylesheet" href="modal.css?v=1.2">
-    <link rel="stylesheet" href="stats.css?v=1.2">
+    <link rel="stylesheet" href="css/style.css?v=1.2">
+    <link rel="stylesheet" href="css/modal.css?v=1.2">
+    <link rel="stylesheet" href="css/stats.css?v=1.2">
 </head>
 <body>
     <div class="notification" id="notification"></div>
@@ -114,7 +114,7 @@
             <div class="filter-group filter-6">
                 <label for="action" >Действие:</label>
                 <select id="action">
-                    <option value=">Все</option>
+                    <option value="">Все</option>
                     <option value="TCP_DENIED">TCP_DENIED</option>
                     <option value="TCP_MISS">TCP_MISS</option>
                     <option value="TCP_HIT">TCP_HIT</option>
@@ -288,7 +288,9 @@
             </div>
         </div>
     </div>
+    
+    <!-- Подключаем Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="app.js"></script>
+    <script src="js/app.js"></script>
 </body>
 </html>
