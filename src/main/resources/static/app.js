@@ -23,7 +23,8 @@ const API_ENDPOINTS = {
     TOP_USERS: '/api/top-users',
     START_PARSING: '/api/start-file-parsing',
     PARSING_STATUS: '/api/parsing-status',
-    CHECK_FILE: '/api/check-file',  // Добавляем новый endpoint
+    CANCEL_PARSING: '/api/cancel-parsing',
+    CHECK_FILE: '/api/check-file',
     CHECK_DATA: '/api/check-data',
     STATUSES: '/api/statuses',
     ACTIONS: '/api/actions'
@@ -144,34 +145,45 @@ function calculateRemainingTime(status) {
     const processed = status.processed;
     const total = status.total;
     
-    if (processed >= total) {
+    if (processed >= total || total <= 0) {
         return 'завершено';
     }
     
     // Расчет скорости (строк в секунду)
     const speed = processed / elapsed;
     
-    if (speed === 0) {
+    if (speed === 0 || speed < 0.001) {
         return 'расчет...';
     }
     
     // Расчет оставшегося времени
     const remaining = total - processed;
+    
+    // Защита от деления на ноль и отрицательных значений
+    if (remaining <= 0) {
+        return 'завершено';
+    }
+    
     const secondsRemaining = remaining / speed;
     
+    // Ограничиваем максимальное время (24 часа)
+    const maxSeconds = 24 * 3600;
+    const actualSeconds = Math.min(secondsRemaining, maxSeconds);
+    
     // Форматирование времени
-    if (secondsRemaining < 60) {
-        return `осталось: ~${Math.round(secondsRemaining)} сек`;
-    } else if (secondsRemaining < 3600) {
-        const minutes = Math.floor(secondsRemaining / 60);
-        const seconds = Math.round(secondsRemaining % 60);
+    if (actualSeconds < 60) {
+        return `осталось: ~${Math.round(actualSeconds)} сек`;
+    } else if (actualSeconds < 3600) {
+        const minutes = Math.floor(actualSeconds / 60);
+        const seconds = Math.round(actualSeconds % 60);
         return `осталось: ~${minutes} мин ${seconds} сек`;
     } else {
-        const hours = Math.floor(secondsRemaining / 3600);
-        const minutes = Math.round((secondsRemaining % 3600) / 60);
+        const hours = Math.floor(actualSeconds / 3600);
+        const minutes = Math.round((actualSeconds % 3600) / 60);
         return `осталось: ~${hours} ч ${minutes} мин`;
     }
 }
+
 function formatDateTimeLocal(date) {
     return date.toISOString().slice(0, 16);
 }
@@ -708,9 +720,14 @@ function stopProgressPolling() {
         parsingInterval = null;
     }
     
-    // Разблокируем кнопки после завершения парсинга
+    // При остановке polling сбрасываем состояние парсинга
     if (activeRequestType === 'parsing') {
-        resetRequestState();
+        // Обновляем статус парсинга в UI
+        const statusElement = document.getElementById('parsingStatus');
+        if (statusElement && statusElement.textContent !== 'Парсинг отменен') {
+            statusElement.textContent = 'Готов к работе';
+            statusElement.style.color = 'var(--text)';
+        }
     }
 }
 
@@ -798,6 +815,13 @@ async function startParsing() {
     if (!filePath) {
         showNotification('Введите путь к файлу логов');
         return;
+    }
+
+    // Убедимся, что предыдущее состояние сброшено
+    if (isRequestInProgress && activeRequestType === 'parsing') {
+        console.log('⚠️ Предыдущий парсинг был отменен, сбрасываем состояние...');
+        resetRequestState();
+        resetParsingUI();
     }
     
     // Проверяем, не выполняется ли уже другой запрос
@@ -932,6 +956,31 @@ function updateParsingUI(status) {
     const stageElement = document.getElementById('parsingStage') || document.createElement('div');
     const button = document.getElementById('startParsingBtn');
     
+    // if (!status.isParsing) {
+    //     // Сбрасываем состояние запроса
+    //     resetRequestState();
+        
+    //     // Разблокируем кнопку запуска парсинга
+    //     if (button) {
+    //         button.disabled = false;
+    //         button.textContent = '🚀 Начать парсинг';
+    //     }
+        
+    //     // Если прогресс не 100% (была отмена)
+    //     if (status.progress < 100) {
+    //         statusElement.textContent = 'Парсинг отменен';
+    //         statusElement.style.color = '#dc3545';
+            
+    //         // Через 2 секунды показываем "Готов к работе"
+    //         setTimeout(() => {
+    //             statusElement.textContent = 'Готов к работе';
+    //             statusElement.style.color = 'var(--text)';
+    //             if (detailsElement) detailsElement.style.display = 'none';
+    //             if (stageElement) stageElement.style.display = 'none';
+    //         }, 2000);
+    //     }
+    // }
+
     if (status.isParsing) {
         // Рассчитываем прогресс
         const parsingProgress = Math.min(100, Math.max(0, status.progress || 0));
@@ -967,15 +1016,16 @@ function updateParsingUI(status) {
         button.disabled = true;
         button.textContent = '⏳ Парсинг выполняется...';
         
-    } else {
+} else {
         if (status.progress >= 100) {
+            // Парсинг завершен успешно
             statusElement.textContent = '✅ Парсинг завершен';
             statusElement.style.color = '#28a745';
             progressBar.style.width = '100%';
             progressText.textContent = 'Прогресс: 100%';
             
             if (detailsElement && detailsElement.textContent !== undefined) {
-                const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+                const totalTime = startTime ? ((Date.now() - startTime) / 1000).toFixed(1) : '?';
                 detailsElement.textContent = `Обработано: ${status.processed?.toLocaleString() || '0'} строк • Общее время: ${totalTime} сек`;
             }
             
@@ -984,25 +1034,32 @@ function updateParsingUI(status) {
                 button.disabled = false;
                 button.textContent = '🚀 Начать парсинг';
                 if (stageElement) stageElement.style.display = 'none';
+                // Сбрасываем startTime после успешного завершения
+                startTime = null;
             }, 2000);
+            
         } else {
+            // Парсинг отменен или прерван
             statusElement.textContent = status.status || 'Готов к работе';
-            statusElement.style.color = 'var(--text)';
+            statusElement.style.color = status.status && status.status.includes('отменен') ? '#dc3545' : 'var(--text)';
             button.disabled = false;
             button.textContent = '🚀 Начать парсинг';
             if (detailsElement) detailsElement.style.display = 'none';
             if (stageElement) stageElement.style.display = 'none';
+            
+            // Сбрасываем startTime при отмене
+            startTime = null;
         }
     }
 
-     if (!status.isParsing && status.progress >= 100) {
-            // Перезагружаем статусы после парсинга
-            setTimeout(() => {
-                loadStatuses();
-                loadActions();
-                loadData(); // существующий вызов
-            }, 500);
-        }
+    if (!status.isParsing && status.progress >= 100) {
+        // Перезагружаем статусы после парсинга
+        setTimeout(() => {
+            loadStatuses();
+            loadActions();
+            loadData(); // существующий вызов
+        }, 500);
+    }
 }
 
 // Вспомогательная функция для текста кнопки по этапам
@@ -1909,13 +1966,25 @@ function showReadyStatus(requestTime = null) {
     
     let statusText = 'Время выполнения:';
     
-    if (requestTime !== null) {
-        const formattedTime = formatRequestTime(requestTime);
+    // Защита от нереальных значений времени
+    let safeRequestTime = requestTime;
+    if (safeRequestTime !== null) {
+        // Ограничиваем максимум 24 часа (86400000 мс)
+        safeRequestTime = Math.max(0, Math.min(safeRequestTime, 24 * 3600 * 1000));
+        
+        // Если время меньше 1 мс или больше 24 часов - показываем 0
+        if (safeRequestTime < 1 || safeRequestTime > 24 * 3600 * 1000) {
+            safeRequestTime = 0;
+        }
+    }
+    
+    if (safeRequestTime !== null && safeRequestTime > 0) {
+        const formattedTime = formatRequestTime(safeRequestTime);
         statusElement.setAttribute('data-time', formattedTime);
-        statusText = 'Время выполнения:'; // Всегда показываем этот текст
+        statusText = 'Время выполнения:';
     } else {
         statusElement.removeAttribute('data-time');
-        statusText = 'Время выполнения:'; // Даже без времени показываем текст
+        statusText = 'Время выполнения:';
     }
     
     statusElement.textContent = statusText;
@@ -1931,15 +2000,26 @@ function showReadyStatus(requestTime = null) {
 }
 
 // Форматирование времени запроса
+// Форматирование времени запроса
 function formatRequestTime(milliseconds) {
+    // Защита от некорректных значений
+    if (!milliseconds || milliseconds <= 0 || milliseconds > 24 * 3600 * 1000) {
+        return '0 мс';
+    }
+    
     if (milliseconds < 1000) {
         return `${Math.round(milliseconds)} мс`;
     } else if (milliseconds < 60000) {
-        return `${(milliseconds / 1000).toFixed(1)} сек`;
-    } else {
+        const seconds = milliseconds / 1000;
+        return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} сек`;
+    } else if (milliseconds < 3600000) {
         const minutes = Math.floor(milliseconds / 60000);
         const seconds = Math.round((milliseconds % 60000) / 1000);
-        return `${minutes}:${seconds.toString().padStart(2, '0')} мин`;
+        return `${minutes} мин ${seconds} сек`;
+    } else {
+        const hours = Math.floor(milliseconds / 3600000);
+        const minutes = Math.round((milliseconds % 3600000) / 60000);
+        return `${hours} ч ${minutes} мин`;
     }
 }
 
@@ -1947,8 +2027,11 @@ function formatRequestTime(milliseconds) {
 function finishRequestWithMessage(message, showReadyAfterDelay = true) {
     const requestTime = Date.now() - requestStartTime;
     
+    // Защита от отрицательных или нереальных значений времени
+    const safeRequestTime = Math.max(0, Math.min(requestTime, 24 * 3600 * 1000)); // Максимум 24 часа
+    
     // Показываем сообщение БЕЗ времени в тексте
-    showRequestStatus(message, false, requestTime);
+    showRequestStatus(message, false, safeRequestTime);
     
     // Сбрасываем состояние запроса (разблокирует кнопки)
     resetRequestState();
@@ -1956,10 +2039,11 @@ function finishRequestWithMessage(message, showReadyAfterDelay = true) {
     // Через 2 секунды показываем "Готов" с временем выполнения
     if (showReadyAfterDelay) {
         requestStatusTimeout = setTimeout(() => {
-            showReadyStatus(requestTime);
+            showReadyStatus(safeRequestTime);
         }, 2000);
     }
 }
+
 // Создание нового контроллера отмены
 function createAbortController() {
     if (currentAbortController) {
@@ -1971,30 +2055,173 @@ function createAbortController() {
 
 // Отмена текущего запроса
 function cancelCurrentRequest() {
-    if (!isRequestInProgress || !currentAbortController) return;
+    if (!isRequestInProgress) return;
     
     console.log('❌ Отмена текущего запроса');
     
-    // Прерываем запрос
-    currentAbortController.abort();
+    // Фиксируем время до отмены и вычисляем фактическое время выполнения
+    const cancelTime = Date.now();
+    const actualRequestTime = Math.max(0, cancelTime - requestStartTime);
     
-    // Показываем статус отмены
-    const requestTime = Date.now() - requestStartTime;
-    showRequestStatus('Запрос отменен', false, requestTime);
+    console.log(`Время выполнения до отмены: ${actualRequestTime} мс`);
     
-    // Сбрасываем состояние
+    // Если это парсинг - отправляем запрос на отмену парсинга
+    if (activeRequestType === 'parsing') {
+        cancelParsing();
+        return;
+    }
+    
+    // Для обычных запросов - используем существующую логику
+    if (currentAbortController) {
+        currentAbortController.abort();
+    }
+    
+    // Сбрасываем состояние ДО того как показываем статус
     resetRequestState();
+    
+    // Показываем статус отмены с корректным временем
+    showRequestStatus('Запрос отменен', false, actualRequestTime);
     
     // Разблокируем все кнопки
     enableAllButtons();
     
     // Через 2 секунды показываем "Готов"
     requestStatusTimeout = setTimeout(() => {
-        showReadyStatus(requestTime);
+        showReadyStatus(actualRequestTime);
     }, 2000);
     
     // Показываем уведомление
     showNotification('Запрос отменен', true);
+}
+
+async function cancelParsing() {
+    try {
+        console.log('🛑 Отправка запроса на отмену парсинга...');
+        
+        // Фиксируем время ДО отправки запроса
+        const cancelStartTime = Date.now();
+        
+        // Вычисляем фактическое время выполнения парсинга
+        const actualParsingTime = cancelStartTime - requestStartTime;
+        console.log(`Фактическое время парсинга: ${actualParsingTime} мс`);
+        
+        const response = await fetch(API_ENDPOINTS.CANCEL_PARSING, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            signal: AbortSignal.timeout(5000) // Таймаут 5 секунд
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            console.log('✅ Парсинг отменен на сервере');
+            
+            // Останавливаем polling
+            stopProgressPolling();
+            
+            // Сбрасываем UI парсинга
+            resetParsingUI();
+            
+            // Сбрасываем состояние запроса (ВАЖНО!)
+            resetRequestState();
+            
+            // Разблокируем все кнопки
+            enableAllButtons();
+            
+            // Показываем статус с КОРРЕКТНЫМ временем выполнения парсинга
+            showRequestStatus('Парсинг отменен', false, actualParsingTime);
+            
+            // Уведомление
+            showNotification('Парсинг успешно отменен', true);
+            
+            // Через 2 секунды показываем "Готов"
+            requestStatusTimeout = setTimeout(() => {
+                showReadyStatus(actualParsingTime);
+            }, 2000);
+            
+        } else {
+            throw new Error(data.error || 'Не удалось отменить парсинг');
+        }
+        
+    } catch (error) {
+        console.error('❌ Ошибка отмены парсинга:', error);
+        
+        // Все равно показываем время выполнения
+        const actualParsingTime = Date.now() - requestStartTime;
+        showRequestStatus('Ошибка отмены', false, actualParsingTime);
+        
+        // Сбрасываем состояние
+        resetRequestState();
+        enableAllButtons();
+        
+        showNotification('Ошибка при отмене парсинга', true);
+        
+        // Через 2 секунды показываем "Готов"
+        requestStatusTimeout = setTimeout(() => {
+            showReadyStatus(actualParsingTime);
+        }, 2000);
+    }
+}
+
+function resetParsingUI() {
+    const statusElement = document.getElementById('parsingStatus');
+    const progressBar = document.getElementById('parsingProgressBar');
+    const progressText = document.getElementById('parsingProgressText');
+    const detailsElement = document.getElementById('parsingDetails');
+    const stageElement = document.getElementById('parsingStage');
+    const startButton = document.getElementById('startParsingBtn');
+    
+    if (statusElement) {
+        statusElement.textContent = 'Парсинг отменен';
+        statusElement.style.color = '#dc3545';
+    }
+    
+    if (progressBar) {
+        progressBar.style.width = '0%';
+    }
+    
+    if (progressText) {
+        progressText.textContent = 'Прогресс: 0%';
+    }
+    
+    if (detailsElement) {
+        detailsElement.textContent = 'Операция прервана пользователем';
+        detailsElement.style.display = 'block';
+        
+        // Через 3 секунды скрываем детали
+        setTimeout(() => {
+            detailsElement.style.display = 'none';
+        }, 3000);
+    }
+    
+    if (stageElement) {
+        stageElement.style.display = 'none';
+    }
+    
+    if (startButton) {
+        startButton.disabled = false;
+        startButton.textContent = '🚀 Начать парсинг';
+    }
+    
+    // Останавливаем polling
+    if (parsingInterval) {
+        clearInterval(parsingInterval);
+        parsingInterval = null;
+    }
+    
+    // Сбрасываем временные переменные ДО ТОГО как показываем статус
+    if (startTime) {
+        // Вычисляем фактическое время выполнения
+        const actualTime = Date.now() - startTime;
+        console.log(`Время выполнения парсинга: ${actualTime} мс`);
+        startTime = null;
+    }
 }
 
 // Сброс состояния запроса
@@ -2004,6 +2231,7 @@ function resetRequestState() {
     requestStartTime = null;
     
     if (currentAbortController) {
+        currentAbortController.abort();
         currentAbortController = null;
     }
     
@@ -2019,6 +2247,8 @@ function resetRequestState() {
     const requestStatus = document.querySelector('.request-status');
     if (statusElement) statusElement.classList.remove('loading');
     if (requestStatus) requestStatus.classList.remove('loading');
+    
+    console.log('🔄 Состояние запроса сброшено');
 }
 
 function disableAllButtons() {

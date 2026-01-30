@@ -8,4 +8,5 @@ public class ParsingStatus {
     public long total = 0;
     public String filePath;
     public long startTime;
+    public volatile boolean isCancelled = false;
 }

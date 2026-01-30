@@ -41,6 +41,7 @@ public class LogParsingService {
         currentStatus.isParsing = true;
         currentStatus.status = "Начало парсинга";
         currentStatus.filePath = filePath;
+        currentStatus.isCancelled = false;
         currentStatus.startTime = System.currentTimeMillis();
 
         System.out.println("Сервис: запуск парсинга в отдельном потоке");
@@ -122,5 +123,22 @@ public class LogParsingService {
 
     public List<String> getAvailableActions() {
         return logDataRepository.getAvailableActions();
+    }
+
+    public boolean cancelParsing() {
+        if (!currentStatus.isParsing) {
+            return false;
+        }
+
+        // Устанавливаем флаг отмены
+        currentStatus.isCancelled = true;
+
+        // Пытаемся прервать задачу
+        if (parsingTask != null && !parsingTask.isDone()) {
+            parsingTask.cancel(true);
+        }
+
+        System.out.println("Парсинг отменен по запросу пользователя");
+        return true;
     }
 }

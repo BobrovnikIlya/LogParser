@@ -59,7 +59,7 @@ public class LogFileParser {
             // 2. Считаем строки
             System.out.println("Подсчет строк...");
             currentStatus.status = "Подсчет строк...";
-            long totalLines = countLines(filePath);
+            long totalLines = countLines(filePath, currentStatus);
             currentStatus.total = totalLines;
             System.out.println("Всего строк в файле: " + totalLines);
 
@@ -89,6 +89,27 @@ public class LogFileParser {
                 while ((line = br.readLine()) != null) {
                     processed++;
                     lineNumber++;
+
+                    if (currentStatus.isCancelled) {
+                        System.out.println("Парсинг прерван пользователем на строке " + lineNumber);
+                        currentStatus.status = "Парсинг отменен пользователем";
+                        currentStatus.progress = (processed * 100.0) / totalLines;
+                        currentStatus.isParsing = false;
+
+                        // Выполняем финальный batch если есть данные
+                        if (count % batchSize != 0 && count > 0) {
+                            ps.executeBatch();
+                            System.out.println("Выполнен финальный batch из " + (count % batchSize) + " записей");
+                        }
+
+                        // ДЕБАГ
+                        System.out.println("Парсинг отменен. Статистика:");
+                        System.out.println("  Обработано строк: " + processed);
+                        System.out.println("  Добавлено записей: " + count);
+                        System.out.println("  Прогресс: " + currentStatus.progress + "%");
+
+                        return; // Прерываем выполнение
+                    }
 
                     // Показываем прогресс каждые 10000 строк
                     if (processed % 10000 == 0) {
@@ -278,13 +299,27 @@ public class LogFileParser {
         }
     }
 
-    private long countLines(String filePath) throws Exception {
+    private long countLines(String filePath, ParsingStatus currentStatus) throws Exception {
         long lines = 0;
         try (BufferedReader br = new BufferedReader(new java.io.FileReader(filePath))) {
-            while (br.readLine() != null) {
+            String line;
+            while ((line = br.readLine()) != null) {
                 lines++;
+
+                // ПРОВЕРКА ОТМЕНЫ КАЖДЫЕ 1000 СТРОК
+                if (lines % 1000 == 0 && currentStatus.isCancelled) {
+                    System.out.println("Подсчет строк отменен пользователем на строке " + lines);
+                    return lines; // Возвращаем текущее количество
+                }
+
                 if (lines % 1000000 == 0) {
                     System.out.println("Подсчитано строк: " + lines);
+
+                    // Также обновляем прогресс подсчета строк в статусе
+                    if (currentStatus != null) {
+                        currentStatus.processed = lines;
+                        currentStatus.status = "Подсчет строк: " + lines;
+                    }
                 }
             }
         }

@@ -147,6 +147,7 @@ public class ParsingController {
             ));
         }
     }
+
     @GetMapping("/api/quick-logs")
     public Map<String, Object> getQuickLogs(
             @RequestParam(defaultValue = "1") int page,
@@ -198,6 +199,7 @@ public class ParsingController {
             ));
         }
     }
+
     @PostMapping("/check-file")
     public ResponseEntity<?> checkFileExists(@RequestBody Map<String, String> request) {
         try {
@@ -232,6 +234,7 @@ public class ParsingController {
             ));
         }
     }
+
     @GetMapping("/statuses")
     public ResponseEntity<?> getStatuses() {
         try {
@@ -357,6 +360,36 @@ public class ParsingController {
                     "error", "Ошибка получения actions",
                     "actions", new ArrayList<>(),
                     "count", 0
+            ));
+        }
+    }
+
+    @PostMapping("/cancel-parsing")
+    public ResponseEntity<?> cancelParsing() {
+        System.out.println("=== ЗАПРОС НА ОТМЕНУ ПАРСИНГА ===");
+
+        try {
+            boolean cancelled = logParsingService.cancelParsing();
+
+            if (cancelled) {
+                System.out.println("Парсинг успешно отменен");
+                return ResponseEntity.ok(Map.of(
+                        "success", true,
+                        "message", "Парсинг отменен"
+                ));
+            } else {
+                System.out.println("Парсинг не выполняется, отмена невозможна");
+                return ResponseEntity.ok(Map.of(
+                        "success", false,
+                        "error", "Парсинг не выполняется"
+                ));
+            }
+
+        } catch (Exception e) {
+            System.err.println("Ошибка отмены парсинга: " + e.getMessage());
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", "Ошибка отмены парсинга: " + e.getMessage()
             ));
         }
     }
