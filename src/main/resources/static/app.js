@@ -732,14 +732,20 @@ function stopProgressPolling() {
 document.getElementById('filePathInput').addEventListener('input', function() {
     const filePath = this.value;
     const fileInfo = document.getElementById('fileInfo');
+    const startButton = document.getElementById('startParsingBtn');
+
+    if (startButton) {
+        // При изменении пути - сбрасываем статус проверки
+        startButton.setAttribute('data-file-valid', 'false');
+        startButton.disabled = true;
+        startButton.textContent = '🔍 Проверить файл';
+    }
     
     if (filePath) {
         if (filePath.includes('/') || filePath.includes('\\')) {
             fileInfo.textContent = `Путь указан. Для парсинга нажмите "Начать парсинг"`;
             fileInfo.className = 'file-info';
-            
-            // Разблокируем кнопку парсинга
-            document.getElementById('startParsingBtn').disabled = false;
+            // НЕ разблокируем кнопку здесь
         } else {
             fileInfo.textContent = `⚠️ Укажите полный путь (например: D:/logs/access.log)`;
             fileInfo.className = 'file-info error';
@@ -747,10 +753,12 @@ document.getElementById('filePathInput').addEventListener('input', function() {
     } else {
         fileInfo.textContent = `Укажите полный путь к файлу на сервере`;
         fileInfo.className = 'file-info';
+        // Блокируем кнопку если поле пустое
         document.getElementById('startParsingBtn').disabled = true;
     }
 });
-function validateFilePath() {
+
+async function validateFilePath() {
     const filePathInput = document.getElementById('filePathInput');
     const filePath = filePathInput.value.trim();
     const startButton = document.getElementById('startParsingBtn');
@@ -759,6 +767,7 @@ function validateFilePath() {
         showNotification('Введите путь к файлу логов');
         filePathInput.style.borderColor = '#dc3545';
         startButton.disabled = true;
+        startButton.setAttribute('data-file-valid', 'false');
         return false;
     }
     
@@ -767,23 +776,49 @@ function validateFilePath() {
         showNotification('Файл должен иметь расширение .log или .txt');
         filePathInput.style.borderColor = '#dc3545';
         startButton.disabled = true;
+        startButton.setAttribute('data-file-valid', 'false');
         return false;
     }
-    
-    // Проверка существования файла через API
-    checkFileExists(filePath).then(exists => {
-        if (exists) {
+
+    try {
+        // Показываем статус проверки
+        startButton.disabled = true;
+        startButton.textContent = '🔍 Проверка...';
+        
+        const response = await fetch('/api/check-file', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ filePath: filePath })
+        });
+        
+        const data = await response.json();
+        
+        if (data.exists) {
             filePathInput.style.borderColor = '#28a745';
             startButton.disabled = false;
+            startButton.textContent = '🚀 Начать парсинг';
+            startButton.setAttribute('data-file-valid', 'true');
             showNotification('Файл найден и готов к парсингу', false);
+            return true;
         } else {
             filePathInput.style.borderColor = '#dc3545';
             startButton.disabled = true;
+            startButton.textContent = '🔍 Проверить файл';
+            startButton.setAttribute('data-file-valid', 'false');
             showNotification('Файл не найден по указанному пути');
+            return false;
         }
-    });
-    
-    return true;
+    } catch (error) {
+        console.error('Ошибка проверки файла:', error);
+        filePathInput.style.borderColor = '#dc3545';
+        startButton.disabled = true;
+        startButton.textContent = '🔍 Проверить файл';
+        startButton.setAttribute('data-file-valid', 'false');
+        showNotification('Ошибка при проверке файла');
+        return false;
+    }
 }
 
 async function checkFileExists(filePath) {
@@ -813,6 +848,16 @@ async function startParsing() {
         showNotification('Введите путь к файлу логов');
         return;
     }
+    
+    // Проверяем, был ли файл проверен
+    const isValid = startButton.getAttribute('data-file-valid') === 'true';
+    if (!isValid) {
+        showNotification('Сначала проверьте файл через кнопку "Проверить файл"');
+        return;
+    }
+    
+    // Сбрасываем статус проверки (чтобы кнопка была неактивна после парсинга)
+    startButton.setAttribute('data-file-valid', 'false');
 
     // Убедимся, что предыдущее состояние сброшено
     if (isRequestInProgress && activeRequestType === 'parsing') {
@@ -894,9 +939,9 @@ async function startParsing() {
         // Разблокируем все кнопки при ошибке
         resetRequestState();
         
-        // Восстанавливаем кнопку
-        startButton.disabled = false;
-        startButton.textContent = '🚀 Начать парсинг';
+        // При ошибке возвращаем статус кнопки
+        startButton.setAttribute('data-file-valid', 'false');
+        startButton.textContent = '🔍 Проверить файл';
         
         // Сбрасываем прогресс
         resetParsingProgress();
@@ -924,6 +969,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 validateFilePath();
             }
         });
+    }
+
+    const startButton = document.getElementById('startParsingBtn');
+    if (startButton) {
+        startButton.disabled = true;
+        startButton.setAttribute('data-file-valid', 'false');
     }
 });
 
@@ -1730,6 +1781,23 @@ function initializeAppWithStatus() {
     if (cancelBtn) {
         cancelBtn.addEventListener('click', cancelCurrentRequest);
     }
+
+    const startButton = document.getElementById('startParsingBtn');
+    if (startButton) {
+        startButton.disabled = true;
+        startButton.setAttribute('data-file-valid', 'false');
+        startButton.textContent = '🔍 Проверить файл';
+    }
+
+        // Добавьте обработчик для Enter в поле ввода
+    const filePathInput = document.getElementById('filePathInput');
+    if (filePathInput) {
+        filePathInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                validateFilePath();
+            }
+        });
+    }
     
     // Инициализируем состояние кнопок
     enableAllButtons(); // Устанавливаем правильное начальное состояние
@@ -2303,15 +2371,7 @@ function enableAllButtons() {
     actionButtons.forEach(button => {
         button.disabled = false;
     });
-    
-    // Кнопки парсинга (только если парсинг не выполняется)
-    if (!parsingInterval) {
-        const parsingButton = document.getElementById('startParsingBtn');
-        if (parsingButton) {
-            const filePath = document.getElementById('filePathInput').value.trim();
-            parsingButton.disabled = !filePath;
-        }
-    }
+
     
     // Кнопки в шапке (тема)
     const themeButton = document.querySelector('.header-theme-button button');
@@ -2327,6 +2387,22 @@ function enableAllButtons() {
         });
     }
     
+    if (!parsingInterval) {
+        const parsingButton = document.getElementById('startParsingBtn');
+        const fileInput = document.getElementById('filePathInput');
+        
+        if (parsingButton && fileInput) {
+            const isValid = parsingButton.getAttribute('data-file-valid') === 'true';
+            parsingButton.disabled = !isValid;
+            
+            if (!isValid && fileInput.value.trim()) {
+                parsingButton.textContent = '🔍 Проверить файл';
+            } else if (isValid) {
+                parsingButton.textContent = '🚀 Начать парсинг';
+            }
+        }
+    }
+
     console.log('🔓 Все кнопки разблокированы');
 }
 
