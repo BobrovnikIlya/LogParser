@@ -27,7 +27,7 @@ const API_ENDPOINTS = {
     CHECK_FILE: '/api/check-file',
     CHECK_DATA: '/api/check-data',
     STATUSES: '/api/statuses',
-    ACTIONS: '/api/actions'
+    ACTIONS: '/api/actions'  
 };
 
 // Конфигурация порогов
@@ -693,12 +693,9 @@ function startProgressPolling() {
                 if (!data.isParsing && data.progress >= 100) {
                     console.log('✅ Парсинг завершен, останавливаем polling');
                     stopProgressPolling();
+                    resetRequestState();
                     
-                    // Загружаем данные
-                    setTimeout(() => {
-                        loadData();
-                        showNotification('Парсинг завершен! Данные загружены.', false);
-                    }, 1000);
+
                 }
             }
         } catch (error) {
@@ -1029,14 +1026,22 @@ function updateParsingUI(status) {
                 detailsElement.textContent = `Обработано: ${status.processed?.toLocaleString() || '0'} строк • Общее время: ${totalTime} сек`;
             }
             
-            // Разблокируем кнопку после завершения
-            setTimeout(() => {
+            // Сбрасываем состояние запроса и показываем корректный статус
+
+                const actualParsingTime = startTime ? Date.now() - startTime : 0;
+                
+                // Вместо finishRequestWithMessage() - сразу показываем готовность
+                showRequestStatus('Парсинг завершен', false, actualParsingTime);
+                
+                // Сброс состояния
+                resetRequestState();
+                
+                // Разблокируем кнопку
                 button.disabled = false;
                 button.textContent = '🚀 Начать парсинг';
                 if (stageElement) stageElement.style.display = 'none';
-                // Сбрасываем startTime после успешного завершения
                 startTime = null;
-            }, 2000);
+
             
         } else {
             // Парсинг отменен или прерван
@@ -1057,7 +1062,7 @@ function updateParsingUI(status) {
         setTimeout(() => {
             loadStatuses();
             loadActions();
-            loadData(); // существующий вызов
+            //loadData(); // существующий вызов
         }, 500);
     }
 }
