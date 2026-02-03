@@ -343,4 +343,58 @@ public class DatabaseManager {
             System.err.println("Не удалось сохранить action '" + action + "': " + e.getMessage());
         }
     }
+    public void prepareConnectionForCopy(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            System.out.println("Оптимизация соединения для быстрого COPY...");
+
+            // Убираем настройки, которые нельзя изменить во время транзакции
+            // stmt.execute("SET full_page_writes = off"); // УДАЛЯЕМ ЭТУ СТРОКУ
+
+            // Оставляем только безопасные настройки:
+
+            // 1. Отключаем синхронный коммит (ускоряет запись)
+            stmt.execute("SET synchronous_commit = off");
+
+            // 2. Увеличиваем рабочую память
+            stmt.execute("SET maintenance_work_mem = '1GB'");
+            stmt.execute("SET work_mem = '128MB'");
+
+            // 3. Убираем ограничения по времени
+            stmt.execute("SET statement_timeout = 0");
+            stmt.execute("SET lock_timeout = 0");
+
+            // 4. Включаем параллельные запросы если есть много ядер
+            stmt.execute("SET max_parallel_workers_per_gather = 4");
+
+            // 5. Дополнительные безопасные настройки
+            stmt.execute("SET commit_delay = 100000");  // Задержка коммита для группировки
+            stmt.execute("SET commit_siblings = 5");    // Минимальное количество параллельных транзакций для задержки
+
+            System.out.println("Соединение оптимизировано для COPY");
+        } catch (SQLException e) {
+            System.err.println("Ошибка при оптимизации соединения: " + e.getMessage());
+            // Продолжаем работу даже если не удалось изменить настройки
+        }
+    }
+
+    /**
+     * Восстановление нормальных настроек после COPY (исправленная версия)
+     */
+    public void restoreConnectionSettings(Connection conn) throws SQLException {
+        try (Statement stmt = conn.createStatement()) {
+            System.out.println("Восстановление настроек соединения...");
+
+            stmt.execute("SET synchronous_commit = on");
+            // stmt.execute("SET full_page_writes = on"); // УДАЛЯЕМ ЭТУ СТРОКУ
+            stmt.execute("RESET commit_delay");
+            stmt.execute("RESET commit_siblings");
+            stmt.execute("RESET maintenance_work_mem");
+            stmt.execute("RESET work_mem");
+
+            System.out.println("Настройки соединения восстановлены");
+        } catch (SQLException e) {
+            System.err.println("Ошибка при восстановлении настроек: " + e.getMessage());
+            // Игнорируем ошибку, так как это не критично
+        }
+    }
 }

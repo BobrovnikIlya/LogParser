@@ -49,7 +49,7 @@ public class LogParsingService {
         // Запускаем парсинг в отдельном потоке
         parsingTask = executor.submit(() -> {
             try {
-                logFileParser.parseWithOriginalCode(filePath, currentStatus);
+                logFileParser.parseWithHybridCopy(filePath, currentStatus);
             } catch (Exception e) {
                 System.err.println("Сервис: ошибка в потоке парсинга: " + e.getMessage());
                 e.printStackTrace();
