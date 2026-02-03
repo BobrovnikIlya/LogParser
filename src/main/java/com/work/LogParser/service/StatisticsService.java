@@ -1,16 +1,80 @@
 package com.work.LogParser.service;
 
 import com.work.LogParser.config.DatabaseConfig;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.sql.*;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
 
 @Service
 public class StatisticsService {
 
+    @Autowired
+    private AggregatedStatsService aggregatedStatsService;
+
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
     public Map<String, Object> getBasicStats(String whereClause) {
+        // Определяем, пустые ли фильтры (дефолтный случай)
+        boolean isDefaultFilter = whereClause.isEmpty() || whereClause.equals("WHERE 1=1");
+
+        // Если фильтры пустые, пробуем получить агрегированную статистику
+        if (isDefaultFilter) {
+            Map<String, Object> aggregatedStats = aggregatedStatsService.getAggregatedStats(null, null);
+            if (aggregatedStats != null && !aggregatedStats.isEmpty()) {
+                System.out.println("📊 Используем агрегированную статистику (дефолт)");
+                return aggregatedStats;
+            }
+        } else {
+            // Если есть фильтры по датам, пытаемся найти подходящую агрегированную статистику
+            LocalDateTime dateFrom = extractDateFromWhereClause(whereClause, "dateFrom");
+            LocalDateTime dateTo = extractDateFromWhereClause(whereClause, "dateTo");
+
+            if (dateFrom != null || dateTo != null) {
+                Map<String, Object> aggregatedStats = aggregatedStatsService.getAggregatedStats(dateFrom, dateTo);
+                if (aggregatedStats != null && !aggregatedStats.isEmpty()) {
+                    System.out.println("📊 Используем агрегированную статистику за период: " +
+                            (dateFrom != null ? dateFrom : "начало") + " - " +
+                            (dateTo != null ? dateTo : "конец"));
+                    return aggregatedStats;
+                }
+            }
+        }
+
+        // Если агрегированной статистики нет, вычисляем в реальном времени
+        System.out.println("📊 Вычисляем статистику в реальном времени");
+        return calculateRealTimeStats(whereClause);
+    }
+
+    /**
+     * Извлекает дату из WHERE clause
+     */
+    private LocalDateTime extractDateFromWhereClause(String whereClause, String dateType) {
+        try {
+            String searchString = dateType.equals("dateFrom") ? "time >= '" : "time <= '";
+            int startIndex = whereClause.indexOf(searchString);
+            if (startIndex != -1) {
+                startIndex += searchString.length();
+                int endIndex = whereClause.indexOf("'", startIndex);
+                if (endIndex != -1) {
+                    String dateStr = whereClause.substring(startIndex, endIndex);
+                    return LocalDateTime.parse(dateStr.replace("T", " "), DATE_FORMATTER);
+                }
+            }
+        } catch (Exception e) {
+            // Если не удалось распарсить, возвращаем null
+        }
+        return null;
+    }
+
+    /**
+     * Вычисляет статистику в реальном времени
+     */
+    private Map<String, Object> calculateRealTimeStats(String whereClause) {
         Map<String, Object> stats = new HashMap<>();
 
         try {
@@ -80,18 +144,14 @@ public class StatisticsService {
             }
             stats.put("hourly_distribution", hourlyDistribution);
 
-            // 6. Заглушки для совместимости
-            stats.put("avg_response_time", 0);
-            stats.put("total_traffic_mb", 0);
-
-            // 7. Среднее время ответа (только для записей с response_time_ms > 0)
+            // 6. Среднее время ответа (только для записей с response_time_ms > 0)
             String avgResponseTimeQuery = "SELECT AVG(response_time_ms) " + baseQuery +
                     " AND response_time_ms > 0";
             Double avgResponseTime = executeDoubleQuery(avgResponseTimeQuery);
             stats.put("avg_response_time",
                     avgResponseTime != null ? Math.round(avgResponseTime) : 0);
 
-            // 8. Общий трафик в МБ
+            // 7. Общий трафик в МБ
             String totalTrafficQuery = "SELECT COALESCE(SUM(response_size_bytes), 0) " + baseQuery;
             Long totalTrafficBytes = executeLongQuery(totalTrafficQuery);
             double totalTrafficMB = totalTrafficBytes != null ?

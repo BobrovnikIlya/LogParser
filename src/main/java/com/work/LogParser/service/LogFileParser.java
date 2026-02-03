@@ -26,6 +26,9 @@ public class LogFileParser {
     @Autowired
     private LogParserUtils logParserUtils;
 
+    @Autowired
+    private AggregatedStatsService aggregatedStatsService;
+
     private static final int MEMORY_BUFFER_SIZE = 100 * 1024 * 1024; // 100 MB
     private static final int COPY_BUFFER_SIZE = 64 * 1024; // 64 KB для COPY
     private static final int BATCH_COMMIT_SIZE = 100000; // 100K записей на транзакцию
@@ -335,6 +338,9 @@ public class LogFileParser {
 
         status.progress = 99;
         databaseManager.updateStatistics(conn);
+
+        System.out.println("📊 Вычисление и сохранение агрегированной статистики...");
+        aggregatedStatsService.calculateAndSaveDefaultStats();
 
         // Итоговая статистика
         long endTime = System.currentTimeMillis();

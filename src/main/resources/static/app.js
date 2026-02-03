@@ -274,12 +274,23 @@ async function loadData(page = 1) {
     const table = document.getElementById('logsTable');
     const pagination = document.getElementById('pagination');
     
+    // Определяем, пустые ли фильтры
+    const isEmptyFilters = Object.values(filters).every(value => 
+        value === '' || value === null || value === undefined
+    );
+    
     try {
         // Начало запроса
         isRequestInProgress = true;
         activeRequestType = 'loadData';
         requestStartTime = Date.now();
-        showRequestStatus('Загрузка данных...', true);
+        
+        // Показываем оптимизированное сообщение если фильтры пустые
+        if (isEmptyFilters) {
+            showRequestStatus('Загрузка данных (используется кэшированная статистика)...', true);
+        } else {
+            showRequestStatus('Загрузка данных...', true);
+        }
         
         // Блокируем все кнопки
         disableAllButtons();
@@ -314,9 +325,13 @@ async function loadData(page = 1) {
             updatePagination(data.totalPages, page);
             createCharts(data.stats);
             
-            // Успешное завершение
+            // Успешное завершение с оптимизированным сообщением
             const recordCount = data.logs.length;
-            finishRequestWithMessage(`Загружено ${recordCount} записей`, true);
+            const message = isEmptyFilters ? 
+                `Загружено ${recordCount} записей (использована кэшированная статистика)` :
+                `Загружено ${recordCount} записей`;
+            
+            finishRequestWithMessage(message, true);
             
         } else {
             throw new Error('Ошибка загрузки данных: ' + (data.error || 'Неизвестная ошибка'));
