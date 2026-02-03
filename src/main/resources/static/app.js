@@ -772,8 +772,9 @@ async function validateFilePath() {
     }
     
     // Простая валидация пути
-    if (!filePath.endsWith('.log') && !filePath.endsWith('.txt')) {
-        showNotification('Файл должен иметь расширение .log или .txt');
+    const validExtensions = /\.(log|txt)(\.\w+)?$/i; // Разрешает .log, .txt, .log.m1, .log.gz и т.д.
+    if (!validExtensions.test(filePath)) {
+        showNotification('Файл должен иметь расширение .log, .txt или .log.xxx');
         filePathInput.style.borderColor = '#dc3545';
         startButton.disabled = true;
         startButton.setAttribute('data-file-valid', 'false');
