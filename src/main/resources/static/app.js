@@ -285,12 +285,8 @@ async function loadData(page = 1) {
         activeRequestType = 'loadData';
         requestStartTime = Date.now();
         
-        // Показываем оптимизированное сообщение если фильтры пустые
-        if (isEmptyFilters) {
-            showRequestStatus('Загрузка данных (используется кэшированная статистика)...', true);
-        } else {
-            showRequestStatus('Загрузка данных...', true);
-        }
+
+        showRequestStatus('Загрузка данных...', true);
         
         // Блокируем все кнопки
         disableAllButtons();
@@ -327,11 +323,8 @@ async function loadData(page = 1) {
             
             // Успешное завершение с оптимизированным сообщением
             const recordCount = data.logs.length;
-            const message = isEmptyFilters ? 
-                `Загружено ${recordCount} записей (использована кэшированная статистика)` :
-                `Загружено ${recordCount} записей`;
-            
-            finishRequestWithMessage(message, true);
+
+            finishRequestWithMessage(isEmptyFilters ? 'Кэшированная статистика загружена' : 'Данные загружены', true);
             
         } else {
             throw new Error('Ошибка загрузки данных: ' + (data.error || 'Неизвестная ошибка'));
@@ -1019,31 +1012,6 @@ function updateParsingUI(status) {
     const detailsElement = document.getElementById('parsingDetails') || document.createElement('div');
     const stageElement = document.getElementById('parsingStage') || document.createElement('div');
     const button = document.getElementById('startParsingBtn');
-    
-    // if (!status.isParsing) {
-    //     // Сбрасываем состояние запроса
-    //     resetRequestState();
-        
-    //     // Разблокируем кнопку запуска парсинга
-    //     if (button) {
-    //         button.disabled = false;
-    //         button.textContent = '🚀 Начать парсинг';
-    //     }
-        
-    //     // Если прогресс не 100% (была отмена)
-    //     if (status.progress < 100) {
-    //         statusElement.textContent = 'Парсинг отменен';
-    //         statusElement.style.color = '#dc3545';
-            
-    //         // Через 2 секунды показываем "Готов к работе"
-    //         setTimeout(() => {
-    //             statusElement.textContent = 'Готов к работе';
-    //             statusElement.style.color = 'var(--text)';
-    //             if (detailsElement) detailsElement.style.display = 'none';
-    //             if (stageElement) stageElement.style.display = 'none';
-    //         }, 2000);
-    //     }
-    // }
 
     if (status.isParsing) {
         // Рассчитываем прогресс
@@ -1090,7 +1058,7 @@ function updateParsingUI(status) {
             
             if (detailsElement && detailsElement.textContent !== undefined) {
                 const totalTime = startTime ? ((Date.now() - startTime) / 1000).toFixed(1) : '?';
-                detailsElement.textContent = `Обработано: ${status.processed?.toLocaleString() || '0'} строк • Общее время: ${totalTime} сек`;
+                detailsElement.textContent = `Время выполнения: ${totalTime} сек`;
             }
             
             // Сбрасываем состояние запроса и показываем корректный статус
@@ -1516,7 +1484,7 @@ async function showTopUrls() {
         if (data.success) {
             displayTopUrls(data.data);
             openModal('topUrlsModal');
-            finishRequestWithMessage('Топ 100 URL загружен', true);
+            finishRequestWithMessage('Топ 100 URL', true);
         } else {
             throw new Error(data.error || 'Ошибка получения топ URL');
         }
@@ -1562,7 +1530,7 @@ async function showTopUsers() {
         if (data.success) {
             displayTopUsers(data.data);
             openModal('topUsersModal');
-            finishRequestWithMessage('Топ 10 пользователей загружен', true);
+            finishRequestWithMessage('Топ 10 пользователей', true);
         } else {
             throw new Error(data.error || 'Ошибка получения топ пользователей');
         }
