@@ -154,6 +154,24 @@ public class DatabaseManager {
 
             System.out.println("Таблица logs создана успешно");
 
+            try (ResultSet rs = st.executeQuery("SELECT DISTINCT status_code FROM logs WHERE status_code IS NOT NULL")) {
+                while (rs.next()) {
+                    int statusCode = rs.getInt("status_code");
+                    if (statusCode > 0) {
+                        saveStatusIfNotExists(conn, statusCode);
+                    }
+                }
+            }
+
+            try (ResultSet rs = st.executeQuery("SELECT DISTINCT action FROM logs WHERE action IS NOT NULL AND action != '-'")) {
+                while (rs.next()) {
+                    String action = rs.getString("action");
+                    if (action != null && !action.trim().isEmpty()) {
+                        saveActionIfNotExists(conn, action.trim());
+                    }
+                }
+            }
+
         } catch (SQLException e) {
             System.err.println("Ошибка при финализации таблицы: " + e.getMessage());
             throw e;
