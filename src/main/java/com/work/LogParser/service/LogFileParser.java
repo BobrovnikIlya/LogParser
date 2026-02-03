@@ -195,40 +195,66 @@ public class LogFileParser {
         File file = new File(filePath);
         long fileSize = file.length();
 
-        // Для очень больших файлов используем быструю оценку
-        if (fileSize > 1_000_000_000) { // > 1GB
-            // Читаем только начало и конец файла для оценки
+        // Порог для быстрой оценки
+        if (fileSize > 50_000_000) { // > 50MB
+            int SAMPLE_COUNT = 10;
+            int SAMPLE_SIZE = 65536; // 64KB каждый
+
             try (RandomAccessFile raf = new RandomAccessFile(filePath, "r")) {
-                byte[] startBuffer = new byte[65536]; // 64KB
-                byte[] endBuffer = new byte[65536];
+                byte[][] samples = new byte[SAMPLE_COUNT][SAMPLE_SIZE];
+                long[] positions = new long[SAMPLE_COUNT];
 
-                // Читаем начало
-                raf.read(startBuffer);
-                raf.seek(fileSize - 65536);
-                raf.read(endBuffer);
+                // Рассчитываем позиции для равномерного распределения
+                for (int i = 0; i < SAMPLE_COUNT; i++) {
+                    positions[i] = (fileSize * i) / SAMPLE_COUNT;
+                }
 
-                // Считаем строки в выборках
-                long linesInStart = countLinesInBuffer(startBuffer);
-                long linesInEnd = countLinesInBuffer(endBuffer);
+                // Читаем образцы
+                for (int i = 0; i < SAMPLE_COUNT; i++) {
+                    long pos = positions[i];
+                    // Корректируем позицию чтобы не выйти за границы
+                    if (pos + SAMPLE_SIZE > fileSize) {
+                        pos = fileSize - SAMPLE_SIZE;
+                    }
+                    if (pos < 0) pos = 0;
 
-                // Среднее значение для оценки
-                double avgLinesPer64KB = (linesInStart + linesInEnd) / 2.0;
-                long estimatedLines = (long) ((fileSize / 65536.0) * avgLinesPer64KB);
+                    raf.seek(pos);
+                    raf.read(samples[i]);
+                }
 
-                System.out.printf("Быстрая оценка: %,d строк (файл: %,d bytes)%n",
-                        estimatedLines, fileSize);
+                // Считаем строки во всех образцах
+                double totalLines = 0;
+                for (byte[] sample : samples) {
+                    totalLines += countLinesInBuffer(sample);
+                }
+
+                // Среднее значение строк на 64KB
+                double avgLinesPerSample = totalLines / SAMPLE_COUNT;
+
+                // Оценка общего количества строк
+                long estimatedLines = (long) ((fileSize / (double)SAMPLE_SIZE) * avgLinesPerSample);
+
+                System.out.printf("Точная оценка (10 образцов): %,d строк (файл: %,d bytes, %.1f строк/64KB)%n",
+                        estimatedLines, fileSize, avgLinesPerSample);
+
                 return estimatedLines;
             }
         }
 
-        // Для файлов меньше 1GB считаем точно
+        // Для маленьких файлов считаем точно
         return countLinesAccurately(filePath);
     }
 
     private long countLinesInBuffer(byte[] buffer) {
         long lines = 0;
-        for (byte b : buffer) {
-            if (b == '\n') lines++;
+        for (int i = 0; i < buffer.length; i++) {
+            if (buffer[i] == '\n') {
+                lines++;
+                // Учитываем \r\n для Windows
+                if (i > 0 && buffer[i-1] == '\r') {
+                    // Уже учли как \n, ничего не делаем
+                }
+            }
         }
         return lines;
     }
