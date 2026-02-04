@@ -1,8 +1,10 @@
 package com.work.LogParser.service;
 
+import com.work.LogParser.config.DatabaseConfig;
 import org.springframework.stereotype.Service;
 
 import java.sql.*;
+import java.util.List;
 
 @Service
 public class DatabaseManager {
@@ -128,125 +130,176 @@ public class DatabaseManager {
     }
 
     public void finalizeTable(Connection conn) throws SQLException {
+        System.out.println("Финальная обработка таблицы...");
+
+        boolean originalAutoCommit = conn.getAutoCommit();
+
         try (Statement st = conn.createStatement()) {
-            System.out.println("Финальная обработка таблицы...");
-
-            // 1. Проверяем, существует ли уже таблица logs
-            boolean logsTableExists = false;
-            try (ResultSet rs = st.executeQuery(
-                    "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'logs')")) {
-                if (rs.next()) {
-                    logsTableExists = rs.getBoolean(1);
-                }
+            // Устанавливаем autoCommit = false только если нужно
+            if (originalAutoCommit) {
+                conn.setAutoCommit(false);
             }
 
-            if (logsTableExists) {
-                System.out.println("Таблица logs уже существует, переименовываем в logs_backup");
-                // Переименовываем существующую таблицу
-                st.execute("DROP TABLE IF EXISTS logs_backup");
-                st.execute("ALTER TABLE IF EXISTS logs RENAME TO logs_backup");
-            }
-
-            // 2. Делаем временную таблицу постоянной
-            System.out.println("Преобразование UNLOGGED → LOGGED таблицы...");
+            // 1. Делаем временную таблицу постоянной
             st.execute("ALTER TABLE logs_unlogged SET LOGGED");
+
+            // 2. Меняем таблицы местами АТОМАРНО (без отдельного коммита)
+            st.execute("DROP TABLE IF EXISTS logs_old");
+            st.execute("ALTER TABLE IF EXISTS logs RENAME TO logs_old");
             st.execute("ALTER TABLE logs_unlogged RENAME TO logs");
 
-            System.out.println("Таблица logs создана успешно");
-
-            try (ResultSet rs = st.executeQuery("SELECT DISTINCT status_code FROM logs WHERE status_code IS NOT NULL")) {
-                while (rs.next()) {
-                    int statusCode = rs.getInt("status_code");
-                    if (statusCode > 0) {
-                        saveStatusIfNotExists(conn, statusCode);
-                    }
-                }
+            // 3. Если мы изменили autoCommit, делаем коммит
+            if (originalAutoCommit) {
+                conn.commit();
+                conn.setAutoCommit(true); // Восстанавливаем оригинальное значение
             }
 
-            try (ResultSet rs = st.executeQuery("SELECT DISTINCT action FROM logs WHERE action IS NOT NULL AND action != '-'")) {
-                while (rs.next()) {
-                    String action = rs.getString("action");
-                    if (action != null && !action.trim().isEmpty()) {
-                        saveActionIfNotExists(conn, action.trim());
-                    }
-                }
-            }
+            System.out.println("Таблица logs заменена атомарно");
 
-        } catch (SQLException e) {
-            System.err.println("Ошибка при финализации таблицы: " + e.getMessage());
+            populateStatusesAndActions(conn);
+
+        } catch (Exception e) {
+            // Откат в случае ошибки
+            if (!originalAutoCommit) {
+                conn.rollback();
+            }
             throw e;
         }
     }
 
-    public void createIndexes(Connection conn) throws SQLException {
-        System.out.println("Создание индексов для таблицы logs...");
+    private void populateStatusesAndActions(Connection conn) throws SQLException {
+        System.out.println("Заполнение таблиц статусов и действий...");
 
+        // 1. Заполняем статусы
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT DISTINCT status_code FROM logs WHERE status_code IS NOT NULL AND status_code > 0"
+             )) {
+            int count = 0;
+            while (rs.next()) {
+                int statusCode = rs.getInt("status_code");
+                saveStatusIfNotExists(conn, statusCode);
+                count++;
+            }
+            System.out.println("Добавлено статусов: " + count);
+        }
+
+        // 2. Заполняем действия
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT DISTINCT action FROM logs WHERE action IS NOT NULL AND action != '-'"
+             )) {
+            int count = 0;
+            while (rs.next()) {
+                String action = rs.getString("action");
+                if (action != null && !action.trim().isEmpty()) {
+                    saveActionIfNotExists(conn, action.trim());
+                    count++;
+                }
+            }
+            System.out.println("Добавлено действий: " + count);
+        }
+    }
+
+    public void createIndexes(Connection conn) throws SQLException {
+        System.out.println("Создание индексов...");
+
+        // Основные индексы (в текущем соединении)
         try (Statement st = conn.createStatement()) {
-            // Список индексов с проверкой существования
-            String[][] indexes = {
-                    {"idx_logs_time", "CREATE INDEX idx_logs_time ON logs(time)"},
-                    {"idx_logs_ip", "CREATE INDEX idx_logs_ip ON logs(ip)"},
-                    {"idx_logs_username", "CREATE INDEX idx_logs_username ON logs(username)"},
-                    {"idx_logs_status", "CREATE INDEX idx_logs_status ON logs(status_code)"},
-                    {"idx_logs_domain", "CREATE INDEX idx_logs_domain ON logs(domain)"},
-                    {"idx_logs_url_pattern", "CREATE INDEX idx_logs_url_pattern ON logs(url text_pattern_ops)"},
-                    {"idx_logs_response_time", "CREATE INDEX idx_logs_response_time ON logs(response_time_ms) WHERE response_time_ms > 0"},
-                    {"idx_logs_response_size", "CREATE INDEX idx_logs_response_size ON logs(response_size_bytes) WHERE response_size_bytes > 0"},
-                    {"idx_logs_action", "CREATE INDEX idx_logs_action ON logs(action)"}
+            String[] criticalIndexes = {
+                    "CREATE INDEX IF NOT EXISTS idx_logs_time ON logs(time)",
+                    "CREATE INDEX IF NOT EXISTS idx_logs_username ON logs(username)"
             };
 
-            // Проверяем существование каждого индекса перед созданием
-            for (String[] index : indexes) {
-                String indexName = index[0];
-                String createSql = index[1];
+            for (String sql : criticalIndexes) {
+                st.execute(sql);
+            }
+        }
 
-                // Проверяем существует ли индекс
-                boolean indexExists = false;
-                try (ResultSet rs = st.executeQuery(
-                        "SELECT 1 FROM pg_indexes WHERE tablename = 'logs' AND indexname = '" + indexName + "'")) {
-                    indexExists = rs.next();
-                } catch (SQLException e) {
-                    // Если ошибка - продолжаем
-                    System.out.println("Ошибка проверки индекса " + indexName + ": " + e.getMessage());
-                }
+        System.out.println("Основные индексы созданы, запускаем создание частичных...");
 
-                if (!indexExists) {
-                    try {
-                        System.out.println("Создание индекса: " + indexName);
-                        st.execute(createSql);
-                        System.out.println("Индекс " + indexName + " создан успешно");
-                    } catch (SQLException e) {
-                        System.err.println("Ошибка создания индекса " + indexName + ": " + e.getMessage());
-                        // Продолжаем создавать другие индексы
+        // Фоновые индексы в ОТДЕЛЬНОМ соединении
+        new Thread(() -> {
+            try (Connection bgConn = DriverManager.getConnection(
+                    DatabaseConfig.DB_URL,
+                    DatabaseConfig.DB_USERNAME,
+                    DatabaseConfig.DB_PASSWORD)) {
+
+                bgConn.setAutoCommit(true);
+
+                String[] partialIndexes = {
+                        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_active_users ON logs(username) WHERE username != '-'",
+                        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_error_status ON logs(status_code, time) WHERE status_code >= 400",
+                        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_large_files ON logs(response_size_bytes, url) WHERE response_size_bytes > 1048576",
+                        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_ip_filter ON logs(ip) WHERE ip IS NOT NULL"
+                };
+
+                for (String sql : partialIndexes) {
+                    try (Statement bgStmt = bgConn.createStatement()) {
+                        System.out.println("Создание частичного индекса: " + sql.substring(0, 55) + "...");
+                        bgStmt.execute(sql);
+                    } catch (Exception e) {
+                        System.err.println("⚠ Ошибка создания частичного индекса: " + e.getMessage());
                     }
-                } else {
-                    System.out.println("Индекс " + indexName + " уже существует, пропускаем");
+                }
+
+                System.out.println("Частичные индексы созданы");
+
+            } catch (Exception e) {
+                System.err.println("❌ Ошибка в фоновом создании индексов: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    public void createPartialIndexes(Connection conn) throws SQLException {
+        System.out.println("Создание частичных индексов для ускорения фильтрации...");
+
+        try (Statement st = conn.createStatement()) {
+            // Дождаться завершения основных индексов
+            Thread.sleep(2000);
+
+            String[] partialIndexes = {
+                    // Для активных пользователей (> 10 запросов) - часто ищут
+                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_active_users " +
+                            "ON logs(username, time) " +
+                            "WHERE username != '-' AND username IS NOT NULL AND username NOT LIKE '%unknown%'",
+
+                    // Для ошибок 4xx/5xx (самый частый фильтр)
+                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_error_status " +
+                            "ON logs(status_code, time, username) " +
+                            "WHERE status_code >= 400",
+
+                    // Для больших файлов (> 100KB) - часто ищут в аналитике
+                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_large_files " +
+                            "ON logs(response_size_bytes, url, time) " +
+                            "WHERE response_size_bytes > 102400",
+
+                    // Для последних 7 дней (самый частый временной диапазон)
+                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_recent_week " +
+                            "ON logs(time, username, status_code) " +
+                            "WHERE time > CURRENT_DATE - INTERVAL '7 days'",
+
+                    // Для поиска по конкретным действиям
+                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_popular_actions " +
+                            "ON logs(action, time) " +
+                            "WHERE action IN ('TCP_HIT', 'TCP_MISS', 'TCP_DENIED')"
+            };
+
+            for (String sql : partialIndexes) {
+                try {
+                    System.out.println("Создание частичного индекса: " + sql.substring(0, Math.min(50, sql.length())) + "...");
+                    st.execute(sql);
+                    System.out.println("✓ Частичный индекс создан");
+                } catch (SQLException e) {
+                    System.err.println("⚠ Ошибка создания частичного индекса: " + e.getMessage());
+                    // Продолжаем создавать другие
                 }
             }
 
-            // Создаем материализованное представление
-            System.out.println("Создание материализованного представления...");
-            try {
-                st.execute( "DROP MATERIALIZED VIEW IF EXISTS logs_daily_stats");
-                st.execute("""
-                        CREATE MATERIALIZED VIEW logs_daily_stats AS\s
-                        SELECT username, status_code,\s
-                               date_trunc('day', time) as day,\s
-                               count(*) as cnt,
-                               AVG(response_time_ms) as avg_response_time,
-                               SUM(response_size_bytes) as total_traffic_bytes
-                        FROM logs\s
-                        GROUP BY username, status_code, day""");
-                System.out.println("Материализованное представление создано");
-            } catch (SQLException e) {
-                System.err.println("Ошибка создания материализованного представления: " + e.getMessage());
-            }
+            System.out.println("Частичные индексы созданы");
 
-            System.out.println("Все индексы созданы успешно");
-
-        } catch (SQLException e) {
-            System.err.println("Ошибка при создании индексов: " + e.getMessage());
-            throw e;
+        } catch (Exception e) {
+            System.err.println("Ошибка при создании частичных индексов: " + e.getMessage());
         }
     }
 
@@ -254,19 +307,39 @@ public class DatabaseManager {
         System.out.println("Обновление статистики...");
 
         try (Statement st = conn.createStatement()) {
-            // Обновляем статистику PostgreSQL
+            // 1. ANALYZE для основной таблицы
             st.execute("ANALYZE logs");
             System.out.println("Статистика ANALYZE выполнена");
 
-            // Обновляем материализованное представление
-            try {
-                st.execute("REFRESH MATERIALIZED VIEW logs_daily_stats");
-                System.out.println("Материализованное представление обновлено");
-            } catch (SQLException e) {
-                System.err.println("Ошибка обновления материализованного представления: " + e.getMessage());
+            // 2. Проверяем и обновляем материализованные представления
+            String[] materializedViews = {
+                    "logs_daily_stats",
+                    "mv_top_urls",
+                    "mv_top_users"
+            };
+
+            for (String viewName : materializedViews) {
+                try {
+                    // Проверка существования
+                    boolean viewExists = false;
+                    try (ResultSet rs = st.executeQuery(
+                            "SELECT EXISTS (SELECT FROM pg_matviews WHERE matviewname = '" + viewName + "')"
+                    )) {
+                        if (rs.next()) viewExists = rs.getBoolean(1);
+                    }
+
+                    if (viewExists) {
+                        st.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY " + viewName);
+                        System.out.println("Представление " + viewName + " обновлено");
+                    } else {
+                        System.out.println("Представление " + viewName + " не существует, пропускаем");
+                    }
+                } catch (Exception e) {
+                    System.err.println("Ошибка обновления представления " + viewName + ": " + e.getMessage());
+                }
             }
 
-            // Считаем итоговую статистику
+            // 3. Статистика по количеству записей
             try (ResultSet rs = st.executeQuery("SELECT COUNT(*) as total FROM logs")) {
                 if (rs.next()) {
                     long totalRows = rs.getLong("total");
