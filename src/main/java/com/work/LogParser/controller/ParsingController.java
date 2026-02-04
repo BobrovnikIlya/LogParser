@@ -136,18 +136,6 @@ public class ParsingController {
         }
     }
 
-    @GetMapping("/top-urls")
-    public ResponseEntity<?> getTopUrls() {
-        try {
-            var topUrls = logParsingService.getTopUrls(100);
-            return ResponseEntity.ok(Map.of("success", true, "data", topUrls));
-        } catch (Exception e) {
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false, "error", "Ошибка: " + e.getMessage()
-            ));
-        }
-    }
-
     @GetMapping("/api/quick-logs")
     public Map<String, Object> getQuickLogs(
             @RequestParam(defaultValue = "1") int page,
@@ -188,14 +176,148 @@ public class ParsingController {
         return result;
     }
 
-    @GetMapping("/top-users")
-    public ResponseEntity<?> getTopUsers() {
+    @GetMapping("/top-urls")
+    public ResponseEntity<?> getTopUrls(
+            @RequestParam(defaultValue = "100") int limit,
+            @RequestParam(required = false) String dateFrom,
+            @RequestParam(required = false) String dateTo,
+            @RequestParam(required = false) String ip,
+            @RequestParam(required = false) String username,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String action) {
+
         try {
-            var topUsers = logParsingService.getTopUsers(10);
-            return ResponseEntity.ok(Map.of("success", true, "data", topUsers));
+            // Используем метод с фильтрами
+            var topUrls = logParsingService.getTopUrlsWithFilters(limit, dateFrom, dateTo,
+                    ip, username, status, action);
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "data", topUrls,
+                    "count", topUrls.size(),
+                    "filters", Map.of(
+                            "dateFrom", dateFrom != null ? dateFrom : "all",
+                            "dateTo", dateTo != null ? dateTo : "all",
+                            "ip", ip != null ? ip : "all",
+                            "username", username != null ? username : "all",
+                            "status", status != null ? status : "all",
+                            "action", action != null ? action : "all"
+                    )
+            ));
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of(
-                    "success", false, "error", "Ошибка: " + e.getMessage()
+                    "success", false,
+                    "error", "Ошибка: " + e.getMessage()
+            ));
+        }
+    }
+
+    @GetMapping("/top-users")
+    public ResponseEntity<?> getTopUsers(
+            @RequestParam(defaultValue = "10") int limit,
+            @RequestParam(required = false) String dateFrom,
+            @RequestParam(required = false) String dateTo,
+            @RequestParam(required = false) String ip,
+            @RequestParam(required = false) String username,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String action) {
+
+        try {
+            // Используем метод с фильтрами
+            var topUsers = logParsingService.getTopUsersWithFilters(limit, dateFrom, dateTo,
+                    ip, username, status, action);
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "data", topUsers,
+                    "count", topUsers.size(),
+                    "filters", Map.of(
+                            "dateFrom", dateFrom != null ? dateFrom : "all",
+                            "dateTo", dateTo != null ? dateTo : "all",
+                            "ip", ip != null ? ip : "all",
+                            "username", username != null ? username : "all",
+                            "status", status != null ? status : "all",
+                            "action", action != null ? action : "all"
+                    )
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", "Ошибка: " + e.getMessage()
+            ));
+        }
+    }
+
+    @GetMapping("/combined-tops")
+    public ResponseEntity<?> getCombinedTops(
+            @RequestParam(defaultValue = "100") int urlLimit,
+            @RequestParam(defaultValue = "10") int userLimit,
+            @RequestParam(required = false) String dateFrom,
+            @RequestParam(required = false) String dateTo,
+            @RequestParam(required = false) String ip,
+            @RequestParam(required = false) String username,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String action) {
+
+        try {
+            var topUrls = logParsingService.getTopUrlsWithFilters(urlLimit, dateFrom, dateTo,
+                    ip, username, status, action);
+            var topUsers = logParsingService.getTopUsersWithFilters(userLimit, dateFrom, dateTo,
+                    ip, username, status, action);
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "topUrls", Map.of(
+                            "data", topUrls,
+                            "count", topUrls.size(),
+                            "limit", urlLimit
+                    ),
+                    "topUsers", Map.of(
+                            "data", topUsers,
+                            "count", topUsers.size(),
+                            "limit", userLimit
+                    ),
+                    "filters", Map.of(
+                            "dateFrom", dateFrom != null ? dateFrom : "all",
+                            "dateTo", dateTo != null ? dateTo : "all",
+                            "ip", ip != null ? ip : "all",
+                            "username", username != null ? username : "all",
+                            "status", status != null ? status : "all",
+                            "action", action != null ? action : "all"
+                    )
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", "Ошибка получения комбинированных топов: " + e.getMessage()
+            ));
+        }
+    }
+
+    // Добавляем метод для проверки доступности фильтрованных топов
+    @GetMapping("/check-filtered-tops")
+    public ResponseEntity<?> checkFilteredTops(
+            @RequestParam(required = false) String dateFrom,
+            @RequestParam(required = false) String dateTo) {
+
+        try {
+            // Проверяем наличие агрегированной статистики для периода
+            var stats = logParsingService.getAggregatedStatsForPeriod(dateFrom, dateTo);
+            boolean hasPrecalculated = stats != null && !stats.isEmpty();
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "hasPrecalculatedData", hasPrecalculated,
+                    "message", hasPrecalculated ?
+                            "Используется предварительно рассчитанная статистика" :
+                            "Будет рассчитано в реальном времени",
+                    "dateFrom", dateFrom != null ? dateFrom : "not specified",
+                    "dateTo", dateTo != null ? dateTo : "not specified"
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", "Ошибка проверки: " + e.getMessage()
             ));
         }
     }

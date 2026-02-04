@@ -1582,7 +1582,7 @@ function displayTopUrls(urls) {
             <td>${index + 1}</td>
             <td class="url-cell" title="${url.url}">${displayUrl}</td>
             <td class="domain-cell">${url.domain || 'N/A'}</td>
-            <td><strong>${url.count.toLocaleString()}</strong></td>
+            <td><strong>${(url.count || 0).toLocaleString()}</strong></td>
         `;
         
         tbody.appendChild(row);
@@ -1609,7 +1609,7 @@ function displayTopUsers(users) {
         row.innerHTML = `
             <td>${index + 1}</td>
             <td><strong>${user.username}</strong></td>
-            <td><strong>${user.count.toLocaleString()}</strong></td>
+            <td><strong>${(user.count || 0).toLocaleString()}</strong></td>
             <td>${userIp}</td>
             <td>${firstSeen}</td>
             <td>${lastSeen}</td>

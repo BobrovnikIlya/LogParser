@@ -25,6 +25,8 @@ public class LogFileParser {
 
     @Autowired
     private LogParserUtils logParserUtils;
+    @Autowired
+    private PrecalculatedTopService precalculatedTopService;
 
     @Autowired
     private AggregatedStatsService aggregatedStatsService;
@@ -336,14 +338,18 @@ public class LogFileParser {
         status.progress = 97;
         databaseManager.createIndexes(conn);
 
-        status.progress = 98;
-        databaseManager.createMaterializedViews(conn);
-
         status.progress = 99;
         databaseManager.updateStatistics(conn);
 
         System.out.println("📊 Вычисление и сохранение агрегированной статистики...");
         aggregatedStatsService.calculateAndSaveDefaultStats();
+
+        System.out.println("🔄 Обновление прерассчитанных топов...");
+        try {
+            precalculatedTopService.updatePrecalculatedTops();
+        } catch (Exception e) {
+            System.err.println("⚠ Ошибка обновления прерассчитанных топов: " + e.getMessage());
+        }
 
         // Итоговая статистика
         long endTime = System.currentTimeMillis();

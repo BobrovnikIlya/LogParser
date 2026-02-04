@@ -1,6 +1,7 @@
-package com.work.LogParser.service;
+package com.work.LogParser.repository;
 
 import com.work.LogParser.config.DatabaseConfig;
+import com.work.LogParser.service.StatisticsService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -131,6 +132,49 @@ public class LogDataRepository {
         }
 
         return result;
+    }
+
+    private void buildWhereClause(StringBuilder where, List<Object> params,
+                                  String dateFrom, String dateTo,
+                                  String clientIp, String username,
+                                  String status, String action) {
+
+        List<String> conditions = new ArrayList<>();
+
+        if (dateFrom != null && !dateFrom.isEmpty()) {
+            conditions.add("time >= ?");
+            params.add(dateFrom);
+        }
+
+        if (dateTo != null && !dateTo.isEmpty()) {
+            conditions.add("time <= ?");
+            params.add(dateTo);
+        }
+
+        if (clientIp != null && !clientIp.isEmpty()) {
+            conditions.add("ip = ?");
+            params.add(clientIp);
+        }
+
+        if (username != null && !username.isEmpty()) {
+            conditions.add("username = ?");
+            params.add(username);
+        }
+
+        if (status != null && !status.isEmpty()) {
+            conditions.add("status_code = ?");
+            params.add(Integer.parseInt(status));
+        }
+
+        if (action != null && !action.isEmpty()) {
+            conditions.add("action = ?");
+            params.add(action);
+        }
+
+        for (int i = 0; i < conditions.size(); i++) {
+            if (i > 0) where.append(" AND ");
+            where.append(conditions.get(i));
+        }
     }
 
     public boolean hasDataInDatabase() {
@@ -316,5 +360,108 @@ public class LogDataRepository {
         }
 
         return actions;
+    }
+
+    public List<Map<String, Object>> getTopUrlsWithFilters(int limit,
+                                                           String dateFrom, String dateTo,
+                                                           String clientIp, String username,
+                                                           String status, String action) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        StringBuilder whereClause = new StringBuilder();
+        List<Object> params = new ArrayList<>();
+
+        // Формируем WHERE clause
+        buildWhereClause(whereClause, params, dateFrom, dateTo, clientIp, username, status, action);
+
+        String sql = "SELECT " +
+                "url, " +
+                "COUNT(*) as request_count, " +
+                "ROUND(AVG(response_time_ms)) as avg_response_time, " +
+                "SUM(response_size_bytes) as total_bytes, " +
+                "MAX(time) as last_access " +
+                "FROM logs " +
+                (whereClause.length() > 0 ? "WHERE " + whereClause.toString() : "") +
+                " GROUP BY url " +
+                " HAVING COUNT(*) > 0 " +
+                " ORDER BY request_count DESC " +
+                " LIMIT ?";
+
+        params.add(limit);
+
+        try {
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, params.toArray());
+            for (Map<String, Object> row : rows) {
+                Map<String, Object> item = new HashMap<>();
+                item.put("url", row.get("url"));
+                item.put("request_count", row.get("request_count"));
+                item.put("avg_response_time", row.get("avg_response_time"));
+                item.put("total_bytes", row.get("total_bytes"));
+                item.put("last_access", row.get("last_access"));
+
+                // Конвертируем байты в МБ
+                Long bytes = (Long) row.get("total_bytes");
+                if (bytes != null) {
+                    item.put("total_mb", Math.round(bytes / (1024.0 * 1024.0) * 100.0) / 100.0);
+                }
+
+                result.add(item);
+            }
+        } catch (Exception e) {
+            System.err.println("Ошибка при получении топ URL: " + e.getMessage());
+        }
+
+        return result;
+    }
+
+    public List<Map<String, Object>> getTopUsersWithFilters(int limit,
+                                                            String dateFrom, String dateTo,
+                                                            String clientIp, String username,
+                                                            String status, String action) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        StringBuilder whereClause = new StringBuilder();
+        List<Object> params = new ArrayList<>();
+
+        // Формируем WHERE clause
+        buildWhereClause(whereClause, params, dateFrom, dateTo, clientIp, username, status, action);
+
+        String sql = "SELECT " +
+                "username, " +
+                "COUNT(*) as request_count, " +
+                "COUNT(DISTINCT ip) as unique_ips, " +
+                "ROUND(AVG(response_time_ms)) as avg_response_time, " +
+                "SUM(response_size_bytes) as total_bytes " +
+                "FROM logs " +
+                "WHERE username IS NOT NULL AND username != '-' " +
+                (whereClause.length() > 0 ? "AND " + whereClause.toString() : "") +
+                " GROUP BY username " +
+                " HAVING COUNT(*) > 0 " +
+                " ORDER BY request_count DESC " +
+                " LIMIT ?";
+
+        params.add(limit);
+
+        try {
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, params.toArray());
+            for (Map<String, Object> row : rows) {
+                Map<String, Object> item = new HashMap<>();
+                item.put("username", row.get("username"));
+                item.put("request_count", row.get("request_count"));
+                item.put("unique_ips", row.get("unique_ips"));
+                item.put("avg_response_time", row.get("avg_response_time"));
+                item.put("total_bytes", row.get("total_bytes"));
+
+                // Конвертируем байты в МБ
+                Long bytes = (Long) row.get("total_bytes");
+                if (bytes != null) {
+                    item.put("total_mb", Math.round(bytes / (1024.0 * 1024.0) * 100.0) / 100.0);
+                }
+
+                result.add(item);
+            }
+        } catch (Exception e) {
+            System.err.println("Ошибка при получении топ пользователей: " + e.getMessage());
+        }
+
+        return result;
     }
 }

@@ -7,7 +7,9 @@ import org.springframework.stereotype.Service;
 
 import java.sql.*;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -25,17 +27,19 @@ public class AggregatedStatsService {
         try (Connection conn = DriverManager.getConnection(
                 DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD)) {
 
-            // Проверяем/создаем таблицу
             ensureStatsTableExists(conn);
 
-            // Если сохраняем дефолтную статистику, удаляем старую
             if (isDefault) {
                 clearDefaultStats(conn);
             }
 
-            // Конвертируем Map в JSON
+            // Конвертируем данные в JSON
             String statusDistributionJson = convertMapToJson((Map<String, Integer>) stats.get("status_distribution"));
             String hourlyDistributionJson = convertArrayToJson((int[]) stats.get("hourly_distribution"));
+
+            // Получаем и сохраняем топы
+            String topUrlsJson = getTopUrlsAsJson(conn, periodStart, periodEnd, 100);
+            String topUsersJson = getTopUsersAsJson(conn, periodStart, periodEnd, 10);
 
             // Сохраняем в БД
             String sql = "INSERT INTO aggregated_stats (" +
@@ -43,8 +47,9 @@ public class AggregatedStatsService {
                     "total_requests, error_requests, unique_ips, " +
                     "avg_response_time, total_traffic_mb, " +
                     "status_distribution_json, hourly_distribution_json, " +
+                    "top_urls_json, top_users_json, " +
                     "is_default, created_at) " +
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
             try (PreparedStatement ps = conn.prepareStatement(sql)) {
                 ps.setTimestamp(1, periodStart != null ? Timestamp.valueOf(periodStart) : null);
@@ -56,11 +61,13 @@ public class AggregatedStatsService {
                 ps.setDouble(7, ((Number) stats.getOrDefault("total_traffic_mb", 0)).doubleValue());
                 ps.setString(8, statusDistributionJson);
                 ps.setString(9, hourlyDistributionJson);
-                ps.setBoolean(10, isDefault);
-                ps.setTimestamp(11, Timestamp.valueOf(LocalDateTime.now()));
+                ps.setString(10, topUrlsJson);
+                ps.setString(11, topUsersJson);
+                ps.setBoolean(12, isDefault);
+                ps.setTimestamp(13, Timestamp.valueOf(LocalDateTime.now()));
 
                 ps.executeUpdate();
-                System.out.println("✅ Агрегированная статистика сохранена (is_default: " + isDefault + ")");
+                System.out.println("✅ Агрегированная статистика с топами сохранена (is_default: " + isDefault + ")");
             }
 
         } catch (Exception e) {
@@ -130,6 +137,14 @@ public class AggregatedStatsService {
      */
     private void ensureStatsTableExists(Connection conn) throws SQLException {
         if (statsTableExists(conn)) {
+            // Проверяем есть ли колонки для топов, если нет - добавляем
+            if (!columnExists(conn, "aggregated_stats", "top_urls_json")) {
+                try (Statement stmt = conn.createStatement()) {
+                    stmt.execute("ALTER TABLE aggregated_stats ADD COLUMN top_urls_json TEXT");
+                    stmt.execute("ALTER TABLE aggregated_stats ADD COLUMN top_users_json TEXT");
+                    System.out.println("✅ Добавлены колонки для топов в aggregated_stats");
+                }
+            }
             return;
         }
 
@@ -144,18 +159,33 @@ public class AggregatedStatsService {
                 "total_traffic_mb DOUBLE PRECISION NOT NULL DEFAULT 0," +
                 "status_distribution_json TEXT," +
                 "hourly_distribution_json TEXT," +
+                "top_urls_json TEXT," +           // Новое поле для топ URL
+                "top_users_json TEXT," +          // Новое поле для топ пользователей
                 "is_default BOOLEAN NOT NULL DEFAULT false," +
                 "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP" +
                 ")";
 
         try (Statement stmt = conn.createStatement()) {
             stmt.execute(createTableSQL);
-            System.out.println("✅ Таблица aggregated_stats создана");
+            System.out.println("✅ Таблица aggregated_stats создана с полями для топов");
 
             // Создаем индексы
             stmt.execute("CREATE INDEX idx_aggregated_stats_period ON aggregated_stats(period_start, period_end)");
             stmt.execute("CREATE INDEX idx_aggregated_stats_default ON aggregated_stats(is_default)");
             stmt.execute("CREATE INDEX idx_aggregated_stats_created ON aggregated_stats(created_at)");
+        }
+    }
+
+    private boolean columnExists(Connection conn, String tableName, String columnName) throws SQLException {
+        String sql = "SELECT EXISTS (SELECT FROM information_schema.columns " +
+                "WHERE table_name = ? AND column_name = ?)";
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, tableName);
+            ps.setString(2, columnName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() && rs.getBoolean(1);
+            }
         }
     }
 
@@ -262,19 +292,21 @@ public class AggregatedStatsService {
             throws SQLException {
 
         StringBuilder where = new StringBuilder("WHERE 1=1");
+
         if (dateFrom != null) {
-            where.append(" AND time >= '").append(dateFrom).append("'");
+            where.append(" AND time >= '").append(dateFrom.toString()).append("'");
         }
         if (dateTo != null) {
-            where.append(" AND time <= '").append(dateTo).append("'");
+            where.append(" AND time <= '").append(dateTo.toString()).append("'");
         }
 
         Map<String, Object> stats = new HashMap<>();
 
         try (Statement stmt = conn.createStatement()) {
             // 1. Общее количество запросов
-            Long totalRequests = executeCountQuery("SELECT COUNT(*) FROM logs " + where, stmt);
-            stats.put("total_requests", totalRequests != null ? totalRequests : 0);
+            String countSql = "SELECT COUNT(*) FROM logs " + where;
+            Long totalRequests = executeCountQuery(countSql, stmt);
+            stats.put("total_requests", totalRequests != null ? totalRequests : 0L);
 
             // 2. Ошибочные запросы
             Long errorRequests = executeCountQuery(
@@ -375,5 +407,109 @@ public class AggregatedStatsService {
         }
 
         return hourlyDistribution;
+    }
+
+    private String getTopUrlsAsJson(Connection conn, LocalDateTime dateFrom,
+                                    LocalDateTime dateTo, int limit) throws SQLException, JsonProcessingException {
+
+        StringBuilder where = new StringBuilder();
+        List<Object> params = new ArrayList<>();
+
+        if (dateFrom != null) {
+            where.append(" AND time >= ?");
+            params.add(Timestamp.valueOf(dateFrom)); // ✅ Используем Timestamp
+        }
+        if (dateTo != null) {
+            where.append(" AND time <= ?");
+            params.add(Timestamp.valueOf(dateTo)); // ✅ Используем Timestamp
+        }
+
+        String sql = "SELECT url, COUNT(*) as request_count " +
+                "FROM logs " +
+                "WHERE url IS NOT NULL AND url != '-' " +
+                where.toString() +
+                " GROUP BY url " +
+                " ORDER BY request_count DESC " +
+                " LIMIT ?";
+
+        params.add(limit);
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            // Устанавливаем параметры с правильными типами
+            for (int i = 0; i < params.size(); i++) {
+                Object param = params.get(i);
+                if (param instanceof Timestamp) {
+                    ps.setTimestamp(i + 1, (Timestamp) param);
+                } else if (param instanceof Integer) {
+                    ps.setInt(i + 1, (Integer) param);
+                } else {
+                    ps.setObject(i + 1, param);
+                }
+            }
+
+            List<Map<String, Object>> results = new ArrayList<>();
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> item = new HashMap<>();
+                    item.put("url", rs.getString("url"));
+                    item.put("count", rs.getLong("request_count"));
+                    results.add(item);
+                }
+            }
+
+            return objectMapper.writeValueAsString(results);
+        }
+    }
+
+    private String getTopUsersAsJson(Connection conn, LocalDateTime dateFrom,
+                                     LocalDateTime dateTo, int limit) throws SQLException, JsonProcessingException {
+
+        StringBuilder where = new StringBuilder();
+        List<Object> params = new ArrayList<>();
+
+        if (dateFrom != null) {
+            where.append(" AND time >= ?");
+            params.add(Timestamp.valueOf(dateFrom)); // ✅ Используем Timestamp
+        }
+        if (dateTo != null) {
+            where.append(" AND time <= ?");
+            params.add(Timestamp.valueOf(dateTo)); // ✅ Используем Timestamp
+        }
+
+        String sql = "SELECT username, COUNT(*) as request_count " +
+                "FROM logs " +
+                "WHERE username IS NOT NULL AND username != '-' " +
+                where.toString() +
+                " GROUP BY username " +
+                " ORDER BY request_count DESC " +
+                " LIMIT ?";
+
+        params.add(limit);
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            // Устанавливаем параметры с правильными типами
+            for (int i = 0; i < params.size(); i++) {
+                Object param = params.get(i);
+                if (param instanceof Timestamp) {
+                    ps.setTimestamp(i + 1, (Timestamp) param);
+                } else if (param instanceof Integer) {
+                    ps.setInt(i + 1, (Integer) param);
+                } else {
+                    ps.setObject(i + 1, param);
+                }
+            }
+
+            List<Map<String, Object>> results = new ArrayList<>();
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> item = new HashMap<>();
+                    item.put("username", rs.getString("username"));
+                    item.put("count", rs.getLong("request_count"));
+                    results.add(item);
+                }
+            }
+
+            return objectMapper.writeValueAsString(results);
+        }
     }
 }

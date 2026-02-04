@@ -1,6 +1,7 @@
 package com.work.LogParser.controller;
 
 import com.work.LogParser.service.AggregatedStatsService;
+import com.work.LogParser.service.PrecalculatedTopService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -15,6 +16,10 @@ public class StatsController {
 
     @Autowired
     private AggregatedStatsService aggregatedStatsService;
+
+    @Autowired
+    private PrecalculatedTopService precalculatedTopService;
+
 
     /**
      * Принудительно пересчитать дефолтную статистику
@@ -31,6 +36,22 @@ public class StatsController {
             return ResponseEntity.status(500).body(Map.of(
                     "success", false,
                     "error", "Ошибка пересчета статистики: " + e.getMessage()
+            ));
+        }
+    }
+
+    @PostMapping("/refresh-precalculated-tops")
+    public ResponseEntity<?> refreshPrecalculatedTops() {
+        try {
+            precalculatedTopService.updatePrecalculatedTops();
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Прерассчитанные топы обновлены"
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", "Ошибка обновления топов: " + e.getMessage()
             ));
         }
     }

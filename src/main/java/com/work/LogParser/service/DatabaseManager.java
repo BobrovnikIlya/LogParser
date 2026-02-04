@@ -261,50 +261,6 @@ public class DatabaseManager {
         }
     }
 
-    public void createMaterializedViews(Connection conn) throws SQLException {
-        System.out.println("Создание материализованных представлений...");
-
-        try (Statement st = conn.createStatement()) {
-            // 1. Топ URL
-            st.execute("""
-            CREATE MATERIALIZED VIEW IF NOT EXISTS mv_top_urls AS
-            SELECT 
-                url,
-                COUNT(*) as request_count,
-                AVG(response_time_ms) as avg_response_time,
-                SUM(response_size_bytes) as total_bytes,
-                MAX(time) as last_access
-            FROM logs
-            WHERE url IS NOT NULL AND url != '-'
-            GROUP BY url
-            ORDER BY request_count DESC
-            LIMIT 1000
-        """);
-
-            // 2. Топ пользователей
-            st.execute("""
-            CREATE MATERIALIZED VIEW IF NOT EXISTS mv_top_users AS
-            SELECT 
-                username,
-                COUNT(*) as request_count,
-                COUNT(DISTINCT ip) as unique_ips,
-                AVG(response_time_ms) as avg_response_time,
-                SUM(response_size_bytes) as total_bytes
-            FROM logs
-            WHERE username IS NOT NULL AND username != '-'
-            GROUP BY username
-            ORDER BY request_count DESC
-            LIMIT 500
-        """);
-
-            System.out.println("Материализованные представления созданы");
-
-        } catch (SQLException e) {
-            System.err.println("Ошибка создания представлений: " + e.getMessage());
-            throw e;
-        }
-    }
-
     public void createStatusesTable(Connection conn) throws SQLException {
         try (Statement stmt = conn.createStatement()) {
             // Проверяем существование таблицы
