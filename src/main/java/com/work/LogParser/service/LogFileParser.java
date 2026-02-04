@@ -336,6 +336,9 @@ public class LogFileParser {
         status.progress = 97;
         databaseManager.createIndexes(conn);
 
+        status.progress = 98;
+        databaseManager.createMaterializedViews(conn);
+
         status.progress = 99;
         databaseManager.updateStatistics(conn);
 

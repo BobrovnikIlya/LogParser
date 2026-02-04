@@ -167,40 +167,6 @@ public class DatabaseManager {
         }
     }
 
-    private void populateStatusesAndActions(Connection conn) throws SQLException {
-        System.out.println("Заполнение таблиц статусов и действий...");
-
-        // 1. Заполняем статусы
-        try (Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery(
-                     "SELECT DISTINCT status_code FROM logs WHERE status_code IS NOT NULL AND status_code > 0"
-             )) {
-            int count = 0;
-            while (rs.next()) {
-                int statusCode = rs.getInt("status_code");
-                saveStatusIfNotExists(conn, statusCode);
-                count++;
-            }
-            System.out.println("Добавлено статусов: " + count);
-        }
-
-        // 2. Заполняем действия
-        try (Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery(
-                     "SELECT DISTINCT action FROM logs WHERE action IS NOT NULL AND action != '-'"
-             )) {
-            int count = 0;
-            while (rs.next()) {
-                String action = rs.getString("action");
-                if (action != null && !action.trim().isEmpty()) {
-                    saveActionIfNotExists(conn, action.trim());
-                    count++;
-                }
-            }
-            System.out.println("Добавлено действий: " + count);
-        }
-    }
-
     public void createIndexes(Connection conn) throws SQLException {
         System.out.println("Создание индексов...");
 
@@ -251,58 +217,6 @@ public class DatabaseManager {
         }).start();
     }
 
-    public void createPartialIndexes(Connection conn) throws SQLException {
-        System.out.println("Создание частичных индексов для ускорения фильтрации...");
-
-        try (Statement st = conn.createStatement()) {
-            // Дождаться завершения основных индексов
-            Thread.sleep(2000);
-
-            String[] partialIndexes = {
-                    // Для активных пользователей (> 10 запросов) - часто ищут
-                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_active_users " +
-                            "ON logs(username, time) " +
-                            "WHERE username != '-' AND username IS NOT NULL AND username NOT LIKE '%unknown%'",
-
-                    // Для ошибок 4xx/5xx (самый частый фильтр)
-                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_error_status " +
-                            "ON logs(status_code, time, username) " +
-                            "WHERE status_code >= 400",
-
-                    // Для больших файлов (> 100KB) - часто ищут в аналитике
-                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_large_files " +
-                            "ON logs(response_size_bytes, url, time) " +
-                            "WHERE response_size_bytes > 102400",
-
-                    // Для последних 7 дней (самый частый временной диапазон)
-                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_recent_week " +
-                            "ON logs(time, username, status_code) " +
-                            "WHERE time > CURRENT_DATE - INTERVAL '7 days'",
-
-                    // Для поиска по конкретным действиям
-                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_popular_actions " +
-                            "ON logs(action, time) " +
-                            "WHERE action IN ('TCP_HIT', 'TCP_MISS', 'TCP_DENIED')"
-            };
-
-            for (String sql : partialIndexes) {
-                try {
-                    System.out.println("Создание частичного индекса: " + sql.substring(0, Math.min(50, sql.length())) + "...");
-                    st.execute(sql);
-                    System.out.println("✓ Частичный индекс создан");
-                } catch (SQLException e) {
-                    System.err.println("⚠ Ошибка создания частичного индекса: " + e.getMessage());
-                    // Продолжаем создавать другие
-                }
-            }
-
-            System.out.println("Частичные индексы созданы");
-
-        } catch (Exception e) {
-            System.err.println("Ошибка при создании частичных индексов: " + e.getMessage());
-        }
-    }
-
     public void updateStatistics(Connection conn) throws SQLException {
         System.out.println("Обновление статистики...");
 
@@ -312,30 +226,24 @@ public class DatabaseManager {
             System.out.println("Статистика ANALYZE выполнена");
 
             // 2. Проверяем и обновляем материализованные представления
-            String[] materializedViews = {
-                    "logs_daily_stats",
-                    "mv_top_urls",
-                    "mv_top_users"
-            };
+            String[] views = {"mv_top_urls", "mv_top_users"};
 
-            for (String viewName : materializedViews) {
+            for (String view : views) {
                 try {
-                    // Проверка существования
-                    boolean viewExists = false;
+                    // Проверяем существует ли
+                    boolean exists = false;
                     try (ResultSet rs = st.executeQuery(
-                            "SELECT EXISTS (SELECT FROM pg_matviews WHERE matviewname = '" + viewName + "')"
+                            "SELECT EXISTS (SELECT FROM pg_matviews WHERE matviewname = '" + view + "')"
                     )) {
-                        if (rs.next()) viewExists = rs.getBoolean(1);
+                        if (rs.next()) exists = rs.getBoolean(1);
                     }
 
-                    if (viewExists) {
-                        st.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY " + viewName);
-                        System.out.println("Представление " + viewName + " обновлено");
-                    } else {
-                        System.out.println("Представление " + viewName + " не существует, пропускаем");
+                    if (exists) {
+                        st.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY " + view);
+                        System.out.println("Представление " + view + " обновлено");
                     }
                 } catch (Exception e) {
-                    System.err.println("Ошибка обновления представления " + viewName + ": " + e.getMessage());
+                    System.err.println("Ошибка обновления " + view + ": " + e.getMessage());
                 }
             }
 
@@ -349,6 +257,50 @@ public class DatabaseManager {
 
         } catch (SQLException e) {
             System.err.println("Ошибка при обновлении статистики: " + e.getMessage());
+            throw e;
+        }
+    }
+
+    public void createMaterializedViews(Connection conn) throws SQLException {
+        System.out.println("Создание материализованных представлений...");
+
+        try (Statement st = conn.createStatement()) {
+            // 1. Топ URL
+            st.execute("""
+            CREATE MATERIALIZED VIEW IF NOT EXISTS mv_top_urls AS
+            SELECT 
+                url,
+                COUNT(*) as request_count,
+                AVG(response_time_ms) as avg_response_time,
+                SUM(response_size_bytes) as total_bytes,
+                MAX(time) as last_access
+            FROM logs
+            WHERE url IS NOT NULL AND url != '-'
+            GROUP BY url
+            ORDER BY request_count DESC
+            LIMIT 1000
+        """);
+
+            // 2. Топ пользователей
+            st.execute("""
+            CREATE MATERIALIZED VIEW IF NOT EXISTS mv_top_users AS
+            SELECT 
+                username,
+                COUNT(*) as request_count,
+                COUNT(DISTINCT ip) as unique_ips,
+                AVG(response_time_ms) as avg_response_time,
+                SUM(response_size_bytes) as total_bytes
+            FROM logs
+            WHERE username IS NOT NULL AND username != '-'
+            GROUP BY username
+            ORDER BY request_count DESC
+            LIMIT 500
+        """);
+
+            System.out.println("Материализованные представления созданы");
+
+        } catch (SQLException e) {
+            System.err.println("Ошибка создания представлений: " + e.getMessage());
             throw e;
         }
     }
@@ -434,6 +386,41 @@ public class DatabaseManager {
             System.err.println("Не удалось сохранить action '" + action + "': " + e.getMessage());
         }
     }
+
+    private void populateStatusesAndActions(Connection conn) throws SQLException {
+        System.out.println("Заполнение таблиц статусов и действий...");
+
+        // 1. Заполняем статусы
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT DISTINCT status_code FROM logs WHERE status_code IS NOT NULL AND status_code > 0"
+             )) {
+            int count = 0;
+            while (rs.next()) {
+                int statusCode = rs.getInt("status_code");
+                saveStatusIfNotExists(conn, statusCode);
+                count++;
+            }
+            System.out.println("Добавлено статусов: " + count);
+        }
+
+        // 2. Заполняем действия
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT DISTINCT action FROM logs WHERE action IS NOT NULL AND action != '-'"
+             )) {
+            int count = 0;
+            while (rs.next()) {
+                String action = rs.getString("action");
+                if (action != null && !action.trim().isEmpty()) {
+                    saveActionIfNotExists(conn, action.trim());
+                    count++;
+                }
+            }
+            System.out.println("Добавлено действий: " + count);
+        }
+    }
+
     public void prepareConnectionForCopy(Connection conn) throws SQLException {
         try (Statement stmt = conn.createStatement()) {
             System.out.println("Оптимизация соединения для быстрого COPY...");
