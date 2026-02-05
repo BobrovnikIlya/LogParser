@@ -147,7 +147,9 @@ public class PrecalculatedTopService {
                     item.put("last_access", rs.getTimestamp("last_access"));
 
                     // Конвертируем байты в МБ
-                    Long bytes = rs.getLong("total_bytes");
+                    Object bytesObj = rs.getObject("total_bytes");
+                    Long bytes = bytesObj != null ?
+                            ((Number) bytesObj).longValue() : null;
                     if (bytes != null) {
                         item.put("total_mb", Math.round(bytes / (1024.0 * 1024.0) * 100.0) / 100.0);
                     }
@@ -197,7 +199,9 @@ public class PrecalculatedTopService {
                     item.put("total_bytes", rs.getLong("total_bytes"));
 
                     // Конвертируем байты в МБ
-                    Long bytes = rs.getLong("total_bytes");
+                    Object bytesObj = rs.getObject("total_bytes");
+                    Long bytes = bytesObj != null ?
+                            ((Number) bytesObj).longValue() : null;
                     if (bytes != null) {
                         item.put("total_mb", Math.round(bytes / (1024.0 * 1024.0) * 100.0) / 100.0);
                     }

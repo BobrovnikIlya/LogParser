@@ -375,14 +375,15 @@ public class LogDataRepository {
 
         String sql = "SELECT " +
                 "url, " +
-                "COUNT(*) as request_count, " +
-                "ROUND(AVG(response_time_ms)) as avg_response_time, " +
-                "SUM(response_size_bytes) as total_bytes, " +
+                "domain, " + // ДОБАВИТЬ domain в SELECT
+                "COUNT(*)::BIGINT as request_count, " +
+                "ROUND(AVG(response_time_ms))::INTEGER as avg_response_time, " +
+                "SUM(response_size_bytes)::BIGINT as total_bytes, " +
                 "MAX(time) as last_access " +
                 "FROM logs " +
-                (whereClause.length() > 0 ? "WHERE " + whereClause.toString() : "") +
-                " GROUP BY url " +
-                " HAVING COUNT(*) > 0 " +
+                "WHERE url IS NOT NULL AND url != '-' " + // ДОБАВИТЬ условия по url
+                (whereClause.length() > 0 ? " AND " + whereClause.toString() : "") +
+                " GROUP BY url, domain " + // ГРУППИРОВАТЬ по url и domain
                 " ORDER BY request_count DESC " +
                 " LIMIT ?";
 
@@ -393,21 +394,33 @@ public class LogDataRepository {
             for (Map<String, Object> row : rows) {
                 Map<String, Object> item = new HashMap<>();
                 item.put("url", row.get("url"));
-                item.put("request_count", row.get("request_count"));
-                item.put("avg_response_time", row.get("avg_response_time"));
-                item.put("total_bytes", row.get("total_bytes"));
+                item.put("domain", row.get("domain")); // ДОБАВИТЬ domain
+
+                // Исправляем приведение типов:
+                Object countObj = row.get("request_count");
+                item.put("count", countObj != null ? ((Number) countObj).longValue() : 0L);
+
+                Object avgTimeObj = row.get("avg_response_time");
+                item.put("avg_response_time", avgTimeObj != null ? ((Number) avgTimeObj).longValue() : 0L);
+
+                Object bytesObj = row.get("total_bytes");
+                Long bytes = bytesObj != null ? ((Number) bytesObj).longValue() : 0L;
+                item.put("total_bytes", bytes);
+
                 item.put("last_access", row.get("last_access"));
 
                 // Конвертируем байты в МБ
-                Long bytes = (Long) row.get("total_bytes");
-                if (bytes != null) {
+                if (bytes != null && bytes > 0) {
                     item.put("total_mb", Math.round(bytes / (1024.0 * 1024.0) * 100.0) / 100.0);
+                } else {
+                    item.put("total_mb", 0.0);
                 }
 
                 result.add(item);
             }
         } catch (Exception e) {
             System.err.println("Ошибка при получении топ URL: " + e.getMessage());
+            e.printStackTrace();
         }
 
         return result;
@@ -426,15 +439,17 @@ public class LogDataRepository {
 
         String sql = "SELECT " +
                 "username, " +
-                "COUNT(*) as request_count, " +
-                "COUNT(DISTINCT ip) as unique_ips, " +
-                "ROUND(AVG(response_time_ms)) as avg_response_time, " +
-                "SUM(response_size_bytes) as total_bytes " +
+                "MIN(ip) as ip, " + // MIN(ip) вместо просто ip
+                "COUNT(*)::BIGINT as request_count, " +
+                "COUNT(DISTINCT ip)::BIGINT as unique_ips, " +
+                "ROUND(AVG(response_time_ms))::INTEGER as avg_response_time, " +
+                "SUM(response_size_bytes)::BIGINT as total_bytes, " +
+                "MIN(time) as first_seen, " + // ДОБАВИТЬ
+                "MAX(time) as last_seen " +   // ДОБАВИТЬ
                 "FROM logs " +
                 "WHERE username IS NOT NULL AND username != '-' " +
-                (whereClause.length() > 0 ? "AND " + whereClause.toString() : "") +
-                " GROUP BY username " +
-                " HAVING COUNT(*) > 0 " +
+                (whereClause.length() > 0 ? " AND " + whereClause.toString() : "") +
+                " GROUP BY username " + // ГРУППИРОВАТЬ только по username
                 " ORDER BY request_count DESC " +
                 " LIMIT ?";
 
@@ -445,21 +460,37 @@ public class LogDataRepository {
             for (Map<String, Object> row : rows) {
                 Map<String, Object> item = new HashMap<>();
                 item.put("username", row.get("username"));
-                item.put("request_count", row.get("request_count"));
-                item.put("unique_ips", row.get("unique_ips"));
-                item.put("avg_response_time", row.get("avg_response_time"));
-                item.put("total_bytes", row.get("total_bytes"));
+                item.put("ip", row.get("ip"));
+
+                // Исправляем приведение типов:
+                Object countObj = row.get("request_count");
+                item.put("count", countObj != null ? ((Number) countObj).longValue() : 0L);
+
+                Object uniqueIpsObj = row.get("unique_ips");
+                item.put("unique_ips", uniqueIpsObj != null ? ((Number) uniqueIpsObj).longValue() : 0L);
+
+                Object avgTimeObj = row.get("avg_response_time");
+                item.put("avg_response_time", avgTimeObj != null ? ((Number) avgTimeObj).longValue() : 0L);
+
+                Object bytesObj = row.get("total_bytes");
+                Long bytes = bytesObj != null ? ((Number) bytesObj).longValue() : 0L;
+                item.put("total_bytes", bytes);
+
+                item.put("first_seen", row.get("first_seen"));
+                item.put("last_seen", row.get("last_seen"));
 
                 // Конвертируем байты в МБ
-                Long bytes = (Long) row.get("total_bytes");
-                if (bytes != null) {
+                if (bytes != null && bytes > 0) {
                     item.put("total_mb", Math.round(bytes / (1024.0 * 1024.0) * 100.0) / 100.0);
+                } else {
+                    item.put("total_mb", 0.0);
                 }
 
                 result.add(item);
             }
         } catch (Exception e) {
             System.err.println("Ошибка при получении топ пользователей: " + e.getMessage());
+            e.printStackTrace();
         }
 
         return result;

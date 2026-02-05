@@ -452,7 +452,9 @@ public class AggregatedStatsService {
                 while (rs.next()) {
                     Map<String, Object> item = new HashMap<>();
                     item.put("url", rs.getString("url"));
-                    item.put("count", rs.getLong("request_count"));
+                    Object countObj = rs.getObject("request_count");
+                    item.put("count", countObj != null ?
+                            ((Number) countObj).longValue() : 0L);
                     results.add(item);
                 }
             }
@@ -504,7 +506,9 @@ public class AggregatedStatsService {
                 while (rs.next()) {
                     Map<String, Object> item = new HashMap<>();
                     item.put("username", rs.getString("username"));
-                    item.put("count", rs.getLong("request_count"));
+                    Object countObj = rs.getObject("request_count");
+                    item.put("count", countObj != null ?
+                            ((Number) countObj).longValue() : 0L);
                     results.add(item);
                 }
             }
