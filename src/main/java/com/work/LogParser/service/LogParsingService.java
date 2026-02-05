@@ -108,13 +108,17 @@ public class LogParsingService {
                                                 String dateFrom, String dateTo,
                                                 String clientIp, String username,
                                                 String status, String search, String action) {
+
         String cacheKey = filterCacheService.generateCacheKey(dateFrom, dateTo, clientIp,
+                username, status, action);
+
+        boolean areFiltersEmpty = filterCacheService.areFiltersEmpty(dateFrom, dateTo, clientIp,
                 username, status, action);
 
         return filterCacheService.getCachedFilterResults(cacheKey, () -> {
             return logDataRepository.getLogsWithStats(page, size, dateFrom, dateTo,
                     clientIp, username, status, search, action);
-        });
+        }, dateFrom, dateTo, clientIp, username, status, action);
     }
 
     public List<Map<String, Object>> getTopUrlsWithFilters(int limit,

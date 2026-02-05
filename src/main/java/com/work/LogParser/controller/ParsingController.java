@@ -1,5 +1,6 @@
 package com.work.LogParser.controller;
 
+import com.work.LogParser.service.FilterCacheService;
 import com.work.LogParser.service.LogParsingService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -17,6 +18,8 @@ import java.util.Map;
 @CrossOrigin(origins = "*")
 public class ParsingController {
 
+    @Autowired
+    private FilterCacheService filterCacheService;
     @Autowired
     private LogParsingService logParsingService;
     @Autowired
@@ -512,6 +515,55 @@ public class ParsingController {
             return ResponseEntity.status(500).body(Map.of(
                     "success", false,
                     "error", "Ошибка отмены парсинга: " + e.getMessage()
+            ));
+        }
+    }
+
+    @PostMapping("/clear")
+    public ResponseEntity<?> clearCache() {
+        try {
+            filterCacheService.evictAllCache();
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Кэш успешно очищен"
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", "Ошибка очистки кэша: " + e.getMessage()
+            ));
+        }
+    }
+
+    @GetMapping("/stats")
+    public ResponseEntity<?> getCacheStats() {
+        try {
+            // Здесь можно добавить получение статистики из Caffeine
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "cacheEnabled", true,
+                    "message", "Кэширование активно"
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", "Ошибка получения статистики: " + e.getMessage()
+            ));
+        }
+    }
+
+    @PostMapping("/refresh")
+    public ResponseEntity<?> refreshCache() {
+        try {
+            filterCacheService.invalidateCacheAfterDataChange();
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Кэш обновлен"
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", "Ошибка обновления кэша: " + e.getMessage()
             ));
         }
     }
