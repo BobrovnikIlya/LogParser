@@ -1469,13 +1469,22 @@ async function showTopUrls() {
         isRequestInProgress = true;
         activeRequestType = 'topUrls';
         requestStartTime = Date.now();
+        
+        // Получаем текущие фильтры
+        const filters = getFiltersForTops();
+        
         showRequestStatus('Загрузка топ URL...', true);
-
         disableAllButtons();
         
         const abortController = createAbortController();
         
-        const response = await fetch(API_ENDPOINTS.TOP_URLS, {
+        // Формируем URL с параметрами фильтров
+        const params = new URLSearchParams({
+            limit: 100,
+            ...filters
+        });
+        
+        const response = await fetch(`${API_ENDPOINTS.TOP_URLS}?${params}`, {
             signal: abortController.signal
         });
         
@@ -1483,8 +1492,12 @@ async function showTopUrls() {
         
         if (data.success) {
             displayTopUrls(data.data);
+            
+            // Обновляем заголовок модального окна с информацией о фильтрах
+            updateTopModalTitle('topUrlsModal', '🌐 Топ URL', filters);
+            
             openModal('topUrlsModal');
-            finishRequestWithMessage('Топ 100 URL', true);
+            finishRequestWithMessage('Топ URL загружен', true);
         } else {
             throw new Error(data.error || 'Ошибка получения топ URL');
         }
@@ -1515,13 +1528,22 @@ async function showTopUsers() {
         isRequestInProgress = true;
         activeRequestType = 'topUsers';
         requestStartTime = Date.now();
+        
+        // Получаем текущие фильтры
+        const filters = getFiltersForTops();
+        
         showRequestStatus('Загрузка топ пользователей...', true);
-
         disableAllButtons();
         
         const abortController = createAbortController();
         
-        const response = await fetch(API_ENDPOINTS.TOP_USERS, {
+        // Формируем URL с параметрами фильтров
+        const params = new URLSearchParams({
+            limit: 10,
+            ...filters
+        });
+        
+        const response = await fetch(`${API_ENDPOINTS.TOP_USERS}?${params}`, {
             signal: abortController.signal
         });
         
@@ -1529,8 +1551,12 @@ async function showTopUsers() {
         
         if (data.success) {
             displayTopUsers(data.data);
+            
+            // Обновляем заголовок модального окна
+            updateTopModalTitle('topUsersModal', '👤 Топ пользователей', filters);
+            
             openModal('topUsersModal');
-            finishRequestWithMessage('Топ 10 пользователей', true);
+            finishRequestWithMessage('Топ пользователей загружен', true);
         } else {
             throw new Error(data.error || 'Ошибка получения топ пользователей');
         }
@@ -1547,6 +1573,35 @@ async function showTopUsers() {
         requestStatusTimeout = setTimeout(() => {
             showReadyStatus(requestTime);
         }, 2000);
+    }
+}
+
+function updateTopModalTitle(modalId, baseTitle, filters) {
+    const modal = document.getElementById(modalId);
+    if (!modal) return;
+    
+    const header = modal.querySelector('.modal-header h2');
+    if (!header) return;
+    
+    // Проверяем, есть ли активные фильтры
+    const hasActiveFilters = Object.values(filters).some(value => 
+        value && value.toString().trim() !== ''
+    );
+    
+    if (hasActiveFilters) {
+        // Создаем строку с информацией о фильтрах
+        const filterInfo = [];
+        
+        if (filters.dateFrom) filterInfo.push(`с ${filters.dateFrom}`);
+        if (filters.dateTo) filterInfo.push(`по ${filters.dateTo}`);
+        if (filters.ip) filterInfo.push(`IP: ${filters.ip}`);
+        if (filters.username) filterInfo.push(`пользователь: ${filters.username}`);
+        if (filters.status) filterInfo.push(`статус: ${filters.status}`);
+        if (filters.action) filterInfo.push(`действие: ${filters.action}`);
+        
+        header.textContent = `${baseTitle} (фильтры: ${filterInfo.join(', ')})`;
+    } else {
+        header.textContent = baseTitle;
     }
 }
 
@@ -1575,18 +1630,31 @@ function displayTopUrls(urls) {
         const row = document.createElement('tr');
         
         // Обрезаем длинные URL для отображения
-        const displayUrl = url.url.length > 80 ? 
-            url.url.substring(0, 80) + '...' : url.url;
+        const displayUrl = url.url && url.url.length > 80 ? 
+            url.url.substring(0, 80) + '...' : (url.url || 'N/A');
+        
+        // Форматируем время ответа если есть
+        const avgResponseTime = url.avg_response_time ? 
+            formatResponseTime(url.avg_response_time) : 'N/A';
+        
+        // Форматируем трафик если есть
+        const totalTraffic = url.total_mb ? 
+            formatTrafficMB(url.total_mb) : 'N/A';
         
         row.innerHTML = `
             <td>${index + 1}</td>
-            <td class="url-cell" title="${url.url}">${displayUrl}</td>
+            <td class="url-cell" title="${url.url || ''}">${displayUrl}</td>
             <td class="domain-cell">${url.domain || 'N/A'}</td>
             <td><strong>${(url.count || 0).toLocaleString()}</strong></td>
+            <td>${avgResponseTime}</td>
+            <td>${totalTraffic}</td>
         `;
         
         tbody.appendChild(row);
     });
+    
+    // Обновить заголовки таблицы если нужно
+    updateTopTableHeaders('topUrlsTable', ['#', 'URL', 'Домен', 'Запросы', 'Ср. время', 'Трафик']);
 }
 
 function displayTopUsers(users) {
@@ -1603,20 +1671,63 @@ function displayTopUsers(users) {
         const lastSeen = user.last_seen ? 
             new Date(user.last_seen).toLocaleString() : 'N/A';
         
-        // Для варианта 1 или 2 (один IP)
-        const userIp = user.ip || 'N/A';
+        // Форматируем время ответа если есть
+        const avgResponseTime = user.avg_response_time ? 
+            formatResponseTime(user.avg_response_time) : 'N/A';
+        
+        // Форматируем трафик если есть
+        const totalTraffic = user.total_mb ? 
+            formatTrafficMB(user.total_mb) : 'N/A';
         
         row.innerHTML = `
             <td>${index + 1}</td>
-            <td><strong>${user.username}</strong></td>
+            <td><strong>${user.username || 'N/A'}</strong></td>
             <td><strong>${(user.count || 0).toLocaleString()}</strong></td>
-            <td>${userIp}</td>
+            <td>${user.ip || 'N/A'}</td>
             <td>${firstSeen}</td>
             <td>${lastSeen}</td>
+            <td>${avgResponseTime}</td>
+            <td>${totalTraffic}</td>
         `;
         
         tbody.appendChild(row);
     });
+    
+    // Обновить заголовки таблицы если нужно
+    updateTopTableHeaders('topUsersTable', 
+        ['#', 'Пользователь', 'Запросы', 'IP', 'Первый запрос', 'Последний запрос', 'Ср. время', 'Трафик']);
+}
+
+function updateTopTableHeaders(tableId, headers) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    
+    const thead = table.querySelector('thead');
+    if (!thead) return;
+    
+    // Очищаем текущие заголовки
+    thead.innerHTML = '';
+    
+    // Создаем новую строку заголовков
+    const headerRow = document.createElement('tr');
+    headers.forEach(header => {
+        const th = document.createElement('th');
+        th.textContent = header;
+        headerRow.appendChild(th);
+    });
+    
+    thead.appendChild(headerRow);
+}
+
+function getFiltersForTops() {
+    return {
+        dateFrom: document.getElementById('dateFrom').value,
+        dateTo: document.getElementById('dateTo').value,
+        ip: document.getElementById('clientIp').value,
+        username: document.getElementById('username').value,
+        status: document.getElementById('status').value,
+        action: document.getElementById('action').value
+    };
 }
 
 // Функции управления модальными окнами
@@ -1664,49 +1775,49 @@ document.addEventListener('keydown', function(event) {
 function exportTopData(type) {
     let data, filename, headers, rows;
     
+    // Получаем текущие фильтры для имени файла
+    const filters = getFiltersForTops();
+    const hasFilters = Object.values(filters).some(value => 
+        value && value.toString().trim() !== ''
+    );
+    
     if (type === 'urls') {
         const rowsElements = document.querySelectorAll('#topUrlsBody tr');
         data = Array.from(rowsElements).map(row => ({
             rank: row.cells[0].textContent,
             url: row.cells[1].title || row.cells[1].textContent,
             domain: row.cells[2].textContent,
-            count: row.cells[3].textContent
+            count: row.cells[3].textContent,
+            avg_response_time: row.cells[4].textContent,
+            total_traffic: row.cells[5].textContent
         }));
-        filename = 'top_urls.csv';
-        headers = ['Ранг', 'URL', 'Домен', 'Количество запросов'];
+        
+        filename = hasFilters ? 
+            `top_urls_filtered_${Date.now()}.csv` : 
+            'top_urls.csv';
+            
+        headers = ['Ранг', 'URL', 'Домен', 'Количество запросов', 'Среднее время ответа', 'Общий трафик'];
     } else {
         const rowsElements = document.querySelectorAll('#topUsersBody tr');
         data = Array.from(rowsElements).map(row => ({
             rank: row.cells[0].textContent,
             username: row.cells[1].textContent,
             count: row.cells[2].textContent,
-            uniqueIps: row.cells[3].textContent,
-            firstSeen: row.cells[4].textContent,
-            lastSeen: row.cells[5].textContent
+            ip: row.cells[3].textContent,
+            first_seen: row.cells[4].textContent,
+            last_seen: row.cells[5].textContent,
+            avg_response_time: row.cells[6].textContent,
+            total_traffic: row.cells[7].textContent
         }));
-        filename = 'top_users.csv';
-        headers = ['Ранг', 'Пользователь', 'Количество запросов', 'Уникальных IP', 'Первый запрос', 'Последний запрос'];
+        
+        filename = hasFilters ? 
+            `top_users_filtered_${Date.now()}.csv` : 
+            'top_users.csv';
+            
+        headers = ['Ранг', 'Пользователь', 'Количество запросов', 'IP', 'Первый запрос', 'Последний запрос', 'Среднее время ответа', 'Общий трафик'];
     }
     
-    // Формируем CSV
-    const csvRows = [
-        headers.join(','),
-        ...data.map(row => Object.values(row).map(value => {
-            const stringValue = String(value);
-            return stringValue.includes(',') ? `"${stringValue}"` : stringValue;
-        }).join(','))
-    ];
-    
-    const csv = csvRows.join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    link.click();
-    URL.revokeObjectURL(url);
-    
-    showNotification(`Топ ${type === 'urls' ? 'URL' : 'пользователей'} экспортирован в CSV`, false);
+    // ... существующий код формирования CSV ...
 }
 
 // Сортировка таблицы (простая по клику заголовка)

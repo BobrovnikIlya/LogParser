@@ -52,6 +52,18 @@
     font-size: 1.5rem;
 }
 
+.modal-subtitle {
+    font-size: 14px;
+    color: var(--muted);
+    margin-top: 5px;
+    font-weight: normal;
+    padding: 0 10px;
+}
+
+.modal-subtitle:empty {
+    display: none;
+}
+
 .close-modal {
     color: var(--muted);
     font-size: 28px;
