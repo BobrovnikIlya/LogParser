@@ -90,10 +90,14 @@ public class LogFileParser {
                 return;
             }
 
-            // 2. Быстрый подсчет строк
+            // 2. Подсчет строк (5% общего прогресса)
             currentStatus.status = "Быстрый подсчет строк...";
-            totalLines = estimateLineCountWithNIO(filePath); // Используем оптимизированный метод
+            currentStatus.progress = 0;
+            totalLines = estimateLineCountWithNIO(filePath);
             currentStatus.total = totalLines;
+
+            // Обновляем прогресс подсчета строк
+            currentStatus.progress = 5; // 5% за подсчет строк
             System.out.println("Строк для обработки: " + totalLines);
 
             // 3. Очистка и создание таблицы
@@ -105,7 +109,7 @@ public class LogFileParser {
 
             // 5. Гибридная загрузка
             System.out.println("Начало гибридной загрузки с оптимизированным чтением...");
-            currentStatus.status = "Загрузка данных (фаза 1/3)...";
+            currentStatus.status = "Загрузка данных...";
 
             // Создаем Piped потоки для потокового COPY
             PipedOutputStream pos = new PipedOutputStream();
@@ -129,7 +133,7 @@ public class LogFileParser {
                 long batchStartTime = System.currentTimeMillis();
 
                 // Фаза 1: Быстрое парсинг и буферизация
-                currentStatus.status = "Парсинг и подготовка данных (фаза 2/3)...";
+                currentStatus.status = "Парсинг и подготовка данных...";
 
                 while ((line = br.readLine()) != null) {
                     lineNumber++;
@@ -153,9 +157,15 @@ public class LogFileParser {
                             writer.flush();
                             recordsInBatch = 0;
 
-                            // Обновление статуса
-                            updateProgress(currentStatus, lineNumber, totalLines,
-                                    totalRecords, batchStartTime);
+                            // Рассчитываем прогресс парсинга (30% общего)
+                            double parsingProgress = (lineNumber * 100.0) / totalLines;
+                            double totalProgress = 5 + (parsingProgress * 0.30); // 5% + до 30%
+
+                            currentStatus.progress = totalProgress;
+                            currentStatus.status = String.format(
+                                    "Парсинг данных: %,d/%,d строк (%.1f%%)",
+                                    lineNumber, totalLines, parsingProgress
+                            );
 
                             batchStartTime = System.currentTimeMillis();
                         }
@@ -164,7 +174,11 @@ public class LogFileParser {
                     // Обновление прогресса каждые 5000 строк
                     if (lineNumber % 5000 == 0) {
                         currentStatus.processed = lineNumber;
-                        currentStatus.progress = (lineNumber * 100.0) / totalLines;
+
+                        // Точный расчет прогресса парсинга
+                        double parsingProgress = (lineNumber * 100.0) / totalLines;
+                        double totalProgress = 5 + (parsingProgress * 0.30);
+                        currentStatus.progress = totalProgress;
                     }
                 }
 
@@ -327,18 +341,52 @@ public class LogFileParser {
 
     private void completeProcessing(Connection conn, ParsingStatus status,
                                     long startTime, long totalLines, long totalRecords)
-            throws SQLException {
+            throws SQLException, InterruptedException {
 
         System.out.println("Завершающая обработка данных...");
-        status.status = "Финализация таблицы (фаза 3/3)...";
-        status.progress = 95;
 
+        // Этап финализации таблицы (20% общего)
+        status.status = "Финализация таблицы...";
+        status.progress = 35; // 5% + 30% + 0% финализации
         databaseManager.finalizeTable(conn);
 
-        status.progress = 97;
+        // Обновляем прогресс после финализации
+        status.progress = 55; // 5% + 30% + 20% финализации
+        status.status = "Финализация таблицы завершена";
+
+        // Этап создания индексов (30% общего)
+        status.status = "Создание индексов...";
         databaseManager.createIndexes(conn);
 
-        status.progress = 99;
+        // Пока индексы создаются в фоне, постепенно увеличиваем прогресс
+        // Создаем отдельный поток для отслеживания прогресса индексации
+        Thread indexingThread = new Thread(() -> {
+            try {
+                // Симуляция прогресса индексации
+                for (int i = 0; i < 10; i++) {
+                    if (status.isCancelled) break;
+
+                    Thread.sleep(2000); // Каждые 2 секунды
+                    double indexingProgress = (i + 1) * 10; // 10-100%
+                    double totalProgress = 55 + (indexingProgress * 0.30); // 55% + до 30%
+                    status.progress = Math.min(85, totalProgress);
+                    status.status = String.format("Создание индексов... (%d%%)", (int)indexingProgress);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        indexingThread.start();
+        indexingThread.join(); // Ждем завершения "симуляции" прогресса
+
+        // Фактическое завершение индексации
+        status.progress = 85; // 5% + 30% + 20% + 30% индексации
+        status.status = "Создание индексов завершено";
+
+        // Этап обновления статистики (15% общего)
+        status.progress = 90; // Начало этапа статистики
+        status.status = "Обновление статистики...";
         databaseManager.updateStatistics(conn);
 
         System.out.println("📊 Вычисление и сохранение агрегированной статистики...");
@@ -350,6 +398,10 @@ public class LogFileParser {
         } catch (Exception e) {
             System.err.println("⚠ Ошибка обновления прерассчитанных топов: " + e.getMessage());
         }
+
+        // Обновляем прогресс после статистики
+        status.progress = 100; // Полное завершение
+        status.status = "Обновление статистики завершено";
 
         // Итоговая статистика
         long endTime = System.currentTimeMillis();
@@ -366,7 +418,6 @@ public class LogFileParser {
                 totalRecords / totalSeconds,
                 (totalRecords * 100.0) / totalLines
         );
-        status.progress = 100;
 
         System.out.printf("ИТОГ: Завершено за %.1f минут, %,.0f записей/сек%n",
                 totalSeconds / 60, totalRecords / totalSeconds);

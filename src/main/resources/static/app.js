@@ -16,6 +16,27 @@ let requestStartTime = null;
 let requestStatusTimeout = null;
 let activeRequestType = null;
 
+const STAGE_WEIGHTS = {
+    COUNTING_LINES: 0.05,      // 5%
+    PARSING: 0.30,            // 30%
+    FINALIZATION: 0.20,       // 20%
+    INDEXING: 0.30,           // 30%
+    STATISTICS: 0.15          // 15%
+};
+
+const AVG_STAGE_TIMES = {
+    FINALIZATION: 10000,      // 10 секунд (среднее)
+    INDEXING: 30000,          // 30 секунд (среднее)
+    STATISTICS: 15000         // 15 секунд (среднее)
+};
+
+// ДОБАВИТЬ после других глобальных переменных
+let currentStage = null;
+let stageStartTime = null;
+let stageProgress = 0;
+let totalProgress = 0;
+let stageEstimates = {};
+
 // API endpoints
 const API_ENDPOINTS = {
     LOGS: '/api/logs',
@@ -539,88 +560,88 @@ function getSelectedFilePath() {
     return input.value.trim();
 }
 
-async function startParsing() {
-    const filePathInput = document.getElementById('filePathInput');
-    const filePath = filePathInput.value.trim();
-    const startButton = document.getElementById('startParsingBtn');
-    const originalText = startButton.textContent;
+// async function startParsing() {
+//     const filePathInput = document.getElementById('filePathInput');
+//     const filePath = filePathInput.value.trim();
+//     const startButton = document.getElementById('startParsingBtn');
+//     const originalText = startButton.textContent;
     
-    if (!filePath) {
-        showNotification('Введите путь к файлу логов');
-        return;
-    }
+//     if (!filePath) {
+//         showNotification('Введите путь к файлу логов');
+//         return;
+//     }
     
-    try {
-        startButton.disabled = true;
-        startButton.textContent = '⏳ Запуск парсинга...';
+//     try {
+//         startButton.disabled = true;
+//         startButton.textContent = '⏳ Запуск парсинга...';
         
-        console.log('🚀 Начало парсинга файла:', filePath);
+//         console.log('🚀 Начало парсинга файла:', filePath);
         
-        // Сбрасываем прогресс
-        resetParsingProgress();
-        startTime = Date.now();
+//         // Сбрасываем прогресс
+//         resetParsingProgress();
+//         startTime = Date.now();
         
-        // 1. Обновляем UI
-        updateProgressUI('Запуск парсинга...', 0, 'Проверка файла...');
+//         // 1. Обновляем UI
+//         updateProgressUI('Запуск парсинга...', 0, 'Проверка файла...');
         
-        console.log('📤 Отправка запроса на сервер...');
+//         console.log('📤 Отправка запроса на сервер...');
         
-        // 2. Отправляем путь к файлу на сервер
-        const parseResponse = await fetch(API_ENDPOINTS.START_PARSING, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ filePath: filePath })
-        });
+//         // 2. Отправляем путь к файлу на сервер
+//         const parseResponse = await fetch(API_ENDPOINTS.START_PARSING, {
+//             method: 'POST',
+//             headers: {
+//                 'Content-Type': 'application/json',
+//             },
+//             body: JSON.stringify({ filePath: filePath })
+//         });
         
-        console.log('📨 Статус ответа:', parseResponse.status, parseResponse.statusText);
+//         console.log('📨 Статус ответа:', parseResponse.status, parseResponse.statusText);
         
-        // Проверяем, есть ли контент в ответе
-        const responseText = await parseResponse.text();
-        console.log('📋 Текст ответа:', responseText);
+//         // Проверяем, есть ли контент в ответе
+//         const responseText = await parseResponse.text();
+//         console.log('📋 Текст ответа:', responseText);
         
-        if (!parseResponse.ok) {
-            throw new Error(`HTTP error! status: ${parseResponse.status}`);
-        }
+//         if (!parseResponse.ok) {
+//             throw new Error(`HTTP error! status: ${parseResponse.status}`);
+//         }
         
-        // Пытаемся распарсить JSON
-        let parseData;
-        try {
-            parseData = JSON.parse(responseText);
-        } catch (jsonError) {
-            console.error('❌ Ошибка парсинга JSON:', jsonError);
-            console.error('Ответ сервера:', responseText);
-            throw new Error('Сервер вернул некорректный ответ. Проверьте консоль сервера.');
-        }
+//         // Пытаемся распарсить JSON
+//         let parseData;
+//         try {
+//             parseData = JSON.parse(responseText);
+//         } catch (jsonError) {
+//             console.error('❌ Ошибка парсинга JSON:', jsonError);
+//             console.error('Ответ сервера:', responseText);
+//             throw new Error('Сервер вернул некорректный ответ. Проверьте консоль сервера.');
+//         }
         
-        console.log('📋 Данные ответа парсинга:', parseData);
+//         console.log('📋 Данные ответа парсинга:', parseData);
         
-        if (parseData.success) {
-            console.log('✅ Парсинг успешно запущен!');
-            showNotification('Парсинг запущен!', false);
+//         if (parseData.success) {
+//             console.log('✅ Парсинг успешно запущен!');
+//             showNotification('Парсинг запущен!', false);
             
-            // Сохраняем путь в localStorage
-            localStorage.setItem('lastLogFilePath', filePath);
+//             // Сохраняем путь в localStorage
+//             localStorage.setItem('lastLogFilePath', filePath);
             
-            // Запускаем отслеживание прогресса
-            startProgressPolling();
-        } else {
-            throw new Error(parseData.error || 'Ошибка запуска парсинга');
-        }
+//             // Запускаем отслеживание прогресса
+//             startProgressPolling();
+//         } else {
+//             throw new Error(parseData.error || 'Ошибка запуска парсинга');
+//         }
         
-    } catch (error) {
-        console.error('❌ Ошибка в процессе:', error);
-        showNotification('Ошибка: ' + error.message);
+//     } catch (error) {
+//         console.error('❌ Ошибка в процессе:', error);
+//         showNotification('Ошибка: ' + error.message);
         
-        // Восстанавливаем кнопку
-        startButton.disabled = false;
-        startButton.textContent = '🚀 Начать парсинг';
+//         // Восстанавливаем кнопку
+//         startButton.disabled = false;
+//         startButton.textContent = '🚀 Начать парсинг';
         
-        // Сбрасываем прогресс
-        resetParsingProgress();
-    }
-}
+//         // Сбрасываем прогресс
+//         resetParsingProgress();
+//     }
+// }
 
 function resetParsingProgress() {
     console.log('🔄 Сброс прогресса парсинга');
@@ -634,6 +655,7 @@ function resetParsingProgress() {
     const progressText = document.getElementById('parsingProgressText');
     const detailsElement = document.getElementById('parsingDetails');
     const stageElement = document.getElementById('parsingStage');
+    const progressContainer = document.getElementById('parsingProgress'); // <-- ДОБАВЛЯЕМ ЗДЕСЬ
     
     if (statusElement) {
         statusElement.textContent = 'Готов к работе';
@@ -645,7 +667,11 @@ function resetParsingProgress() {
     }
     
     if (progressText) {
-        progressText.textContent = 'Прогресс: 0%';
+        progressText.textContent = '0%'; // Проценты скрываются ниже
+    }
+    
+    if (progressContainer) {
+        progressContainer.style.display = 'none'; // Скрываем весь контейнер
     }
     
     if (detailsElement) {
@@ -654,14 +680,40 @@ function resetParsingProgress() {
     }
     
     if (stageElement) {
-        stageElement.textContent = '';
         stageElement.style.display = 'none';
     }
     
     // Сбрасываем временные переменные
     startTime = null;
+    resetStagesState();
     
     console.log('✅ Прогресс парсинга сброшен');
+}
+
+function calculateStageTimeEstimates(totalLines) {
+    // Эмпирические коэффициенты (миллисекунды на строку)
+    const PARSING_SPEED = 0.05; // мс на строку (20 строк/мс)
+    
+    // Расчет времени для этапа парсинга
+    const parsingTime = (totalLines * PARSING_SPEED) / 1000; // в секундах
+    
+    // Расчет общего времени
+    const totalTime = parsingTime + 
+        (AVG_STAGE_TIMES.FINALIZATION / 1000) + 
+        (AVG_STAGE_TIMES.INDEXING / 1000) + 
+        (AVG_STAGE_TIMES.STATISTICS / 1000);
+    
+    return {
+        parsing: parsingTime,
+        total: totalTime,
+        stages: {
+            COUNTING_LINES: 1, // секунда на подсчет
+            PARSING: parsingTime,
+            FINALIZATION: AVG_STAGE_TIMES.FINALIZATION / 1000,
+            INDEXING: AVG_STAGE_TIMES.INDEXING / 1000,
+            STATISTICS: AVG_STAGE_TIMES.STATISTICS / 1000
+        }
+    };
 }
 
 
@@ -851,7 +903,7 @@ async function startParsing() {
     const filePathInput = document.getElementById('filePathInput');
     const filePath = filePathInput.value.trim();
     const startButton = document.getElementById('startParsingBtn');
-    const originalText = startButton.textContent;
+    const progressContainer = document.getElementById('parsingProgress');
     
     if (!filePath) {
         showNotification('Введите путь к файлу логов');
@@ -902,12 +954,19 @@ async function startParsing() {
         
         console.log('🚀 Начало парсинга файла:', filePath);
         
-        // Сбрасываем прогресс
+        // Сбрасываем прогресс и показываем контейнер
         resetParsingProgress();
+        if (progressContainer) {
+            progressContainer.style.display = 'block'; // Показываем контейнер прогресса
+        }
         startTime = Date.now();
         
         // 1. Обновляем UI
-        updateProgressUI('Запуск парсинга...', 0, 'Проверка файла...');
+        const statusElement = document.getElementById('parsingStatus');
+        if (statusElement) {
+            statusElement.textContent = '📊 Подсчет строк (0%)';
+            statusElement.style.color = 'var(--accent)';
+        }
         
         // 2. Отправляем путь к файлу на сервер
         const parseResponse = await fetch(API_ENDPOINTS.START_PARSING, {
@@ -947,6 +1006,11 @@ async function startParsing() {
         
         // Разблокируем все кнопки при ошибке
         resetRequestState();
+        
+        // Скрываем контейнер прогресса при ошибке
+        if (progressContainer) {
+            progressContainer.style.display = 'none';
+        }
         
         // При ошибке возвращаем статус кнопки
         startButton.setAttribute('data-file-valid', 'false');
@@ -1009,98 +1073,253 @@ function updateParsingUI(status) {
     const statusElement = document.getElementById('parsingStatus');
     const progressBar = document.getElementById('parsingProgressBar');
     const progressText = document.getElementById('parsingProgressText');
-    const detailsElement = document.getElementById('parsingDetails') || document.createElement('div');
-    const stageElement = document.getElementById('parsingStage') || document.createElement('div');
-    const button = document.getElementById('startParsingBtn');
-
+    const detailsElement = document.getElementById('parsingDetails');
+    const stageElement = document.getElementById('parsingStage');
+    const progressContainer = document.getElementById('parsingProgress');
+    
     if (status.isParsing) {
-        // Рассчитываем прогресс
-        const parsingProgress = Math.min(100, Math.max(0, status.progress || 0));
+        // Определяем текущий этап
+        const stageInfo = parseStageFromStatus(status.status || '');
+        currentStage = stageInfo.stage;
         
-        let statusText = status.status || 'Парсинг...';
-        if (status.fileName) {
-            statusText = `Парсинг: ${status.fileName}`;
+        // Скрываем stageElement
+        if (stageElement) {
+            stageElement.style.display = 'none';
         }
         
-        statusElement.textContent = statusText;
+        // Показываем контейнер прогресса
+        if (progressContainer) {
+            progressContainer.style.display = 'block';
+        }
+        
+        // Рассчитываем прогресс этапа
+        const stageWeight = STAGE_WEIGHTS[currentStage] || 0;
+        const stageProgressPercent = Math.min(100, Math.max(0, status.progress || 0));
+        stageProgress = stageProgressPercent;
+        
+        // Рассчитываем общий прогресс
+        totalProgress = calculateTotalProgress(currentStage, stageProgressPercent);
+        
+        // Обновляем parsingStatus (название этапа + % этапа)
+        statusElement.textContent = `${stageInfo.name} (${Math.round(stageProgressPercent)}%)`;
         statusElement.style.color = 'var(--accent)';
         
-        progressBar.style.width = parsingProgress + '%';
+        // Обновляем прогресс-бар и процент общего прогресса
+        progressBar.style.width = totalProgress + '%';
+        progressText.textContent = `${Math.round(totalProgress)}%`; // Проценты видимы
         
-        const processed = status.processed?.toLocaleString() || '0';
-        const total = status.total?.toLocaleString() || '0';
-        const progressPercent = status.progress?.toFixed(1) || '0';
-        
-        progressText.textContent = `Прогресс: ${progressPercent}%`;
-        
-        // Обновляем детальную информацию
-        if (detailsElement && detailsElement.textContent !== undefined) {
-            detailsElement.textContent = `Обработано: ${processed}/${total} строк • ${calculateRemainingTime(status)}`;
+        // Обновляем parsingDetails (обработанные строки + общее время)
+        if (detailsElement) {
+            const processed = status.processed?.toLocaleString() || '0';
+            const total = status.total?.toLocaleString() || '0';
+            const remainingTime = calculateRemainingTimeWithStages(
+                status, 
+                currentStage, 
+                stageProgressPercent,
+                totalProgress
+            );
+            
+            // Форматируем время в удобный вид
+            const formattedTime = remainingTime.replace('осталось: ~', '');
+            
+            detailsElement.textContent = 
+                `Обработано: ${processed}/${total} строк • ` +
+                `${formattedTime}`;
             detailsElement.style.display = 'block';
         }
         
-        // Обновляем этап
-        if (stageElement && stageElement.textContent !== undefined) {
-            stageElement.textContent = `Этап парсинга`;
-            stageElement.style.display = 'block';
-        }
-        
-        button.disabled = true;
-        button.textContent = '⏳ Парсинг выполняется...';
-        
-} else {
+    } else {
+        // Парсинг завершен или отменен
         if (status.progress >= 100) {
-            // Парсинг завершен успешно
             statusElement.textContent = '✅ Парсинг завершен';
             statusElement.style.color = '#28a745';
-            progressBar.style.width = '100%';
-            progressText.textContent = 'Прогресс: 100%';
             
-            if (detailsElement && detailsElement.textContent !== undefined) {
+            // Скрываем прогресс-бар и проценты при успешном завершении
+            if (progressContainer) {
+                progressContainer.style.display = 'none';
+            }
+            
+            if (detailsElement) {
                 const totalTime = startTime ? ((Date.now() - startTime) / 1000).toFixed(1) : '?';
                 detailsElement.textContent = `Время выполнения: ${totalTime} сек`;
             }
             
-            // Сбрасываем состояние запроса и показываем корректный статус
-
-                const actualParsingTime = startTime ? Date.now() - startTime : 0;
-                
-                // Вместо finishRequestWithMessage() - сразу показываем готовность
-                showRequestStatus('Парсинг завершен', false, actualParsingTime);
-                
-                // Сброс состояния
-                resetRequestState();
-                
-                // Разблокируем кнопку
-                button.disabled = false;
-                button.textContent = '🚀 Начать парсинг';
-                if (stageElement) stageElement.style.display = 'none';
-                startTime = null;
-
+            // Показываем время выполнения в request-status
+            const requestTime = startTime ? Date.now() - startTime : 0;
+            showRequestStatus(`Выполнено за ${formatRequestTimeShort(requestTime)}`, false, requestTime);
+            
+            // Сброс состояния этапов
+            resetStagesState();
+            
+            // После 3 секунд показываем "Готов"
+            setTimeout(() => {
+                showReadyStatus(requestTime);
+            }, 3000);
             
         } else {
             // Парсинг отменен или прерван
             statusElement.textContent = status.status || 'Готов к работе';
             statusElement.style.color = status.status && status.status.includes('отменен') ? '#dc3545' : 'var(--text)';
-            button.disabled = false;
-            button.textContent = '🚀 Начать парсинг';
-            if (detailsElement) detailsElement.style.display = 'none';
-            if (stageElement) stageElement.style.display = 'none';
             
-            // Сбрасываем startTime при отмене
-            startTime = null;
+            // Скрываем прогресс-бар и проценты
+            if (progressContainer) {
+                progressContainer.style.display = 'none';
+            }
+            
+            if (detailsElement) detailsElement.style.display = 'none';
+            
+            // Сброс состояния этапов при отмене
+            resetStagesState();
+            
+            // Показываем время выполнения даже при отмене
+            if (startTime) {
+                const requestTime = Date.now() - startTime;
+                showRequestStatus(`Отменено за ${formatRequestTimeShort(requestTime)}`, false, requestTime);
+                
+                // После 2 секунд показываем "Готов"
+                setTimeout(() => {
+                    showReadyStatus(requestTime);
+                }, 2000);
+            }
         }
     }
+}
 
-    if (!status.isParsing && status.progress >= 100) {
-        // Перезагружаем статусы после парсинга
-        setTimeout(() => {
-            loadStatuses();
-            loadActions();
-            //loadData(); // существующий вызов
-        }, 500);
+function formatRequestTimeShort(milliseconds) {
+    if (!milliseconds || milliseconds <= 0) return '0 мс';
+    
+    if (milliseconds < 1000) {
+        return `${Math.round(milliseconds)} мс`;
+    } else if (milliseconds < 60000) {
+        const seconds = milliseconds / 1000;
+        return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} сек`;
+    } else if (milliseconds < 3600000) {
+        const minutes = Math.floor(milliseconds / 60000);
+        const seconds = Math.round((milliseconds % 60000) / 1000);
+        return seconds > 0 ? `${minutes} мин ${seconds} сек` : `${minutes} мин`;
+    } else {
+        const hours = Math.floor(milliseconds / 3600000);
+        const minutes = Math.round((milliseconds % 3600000) / 60000);
+        return minutes > 0 ? `${hours} ч ${minutes} мин` : `${hours} ч`;
     }
 }
+
+// Новая функция для парсинга этапа из статуса
+function parseStageFromStatus(statusText) {
+    const stages = {
+        'Быстрый подсчет строк': { stage: 'COUNTING_LINES', name: '📊 Подсчет строк' },
+        'Подсчет строк': { stage: 'COUNTING_LINES', name: '📊 Подсчет строк' },
+        'Загрузка данных': { stage: 'PARSING', name: '🚀 Парсинг' },
+        'Парсинг и подготовка данных': { stage: 'PARSING', name: '🚀 Парсинг' },
+        'Финализация таблицы': { stage: 'FINALIZATION', name: '🗃️ Финализация' },
+        'Создание индексов': { stage: 'INDEXING', name: '📈 Индексация' },
+        'Обновление статистики': { stage: 'STATISTICS', name: '📊 Статистика' },
+        'Вычисление статистики': { stage: 'STATISTICS', name: '📊 Статистика' }
+    };
+    
+    for (const [key, value] of Object.entries(stages)) {
+        if (statusText.includes(key)) {
+            return value;
+        }
+    }
+    
+    return { stage: 'PARSING', name: '🚀 Парсинг' };
+}
+
+// Новая функция расчета общего прогресса
+function calculateTotalProgress(currentStage, stageProgressPercent) {
+    let progress = 0;
+    
+    // Добавляем прогресс завершенных этапов
+    for (const [stage, weight] of Object.entries(STAGE_WEIGHTS)) {
+        if (stage === currentStage) {
+            // Текущий этап - добавляем его прогресс
+            progress += weight * (stageProgressPercent / 100);
+            break;
+        } else {
+            // Завершенные этапы - добавляем полностью
+            progress += weight;
+        }
+    }
+    
+    return Math.min(100, progress * 100);
+}
+
+function calculateRemainingTimeWithStages(status, currentStage, stageProgress, totalProgress) {
+    if (!status.processed || !status.total || !startTime) {
+        return '~ расчет времени';
+    }
+    
+    // Если это этап подсчета строк - используем старый расчет
+    if (currentStage === 'COUNTING_LINES') {
+        const result = calculateRemainingTime(status);
+        return result.replace('осталось: ~', '');
+    }
+    
+    // Если это этап парсинга данных
+    if (currentStage === 'PARSING') {
+        const elapsed = (Date.now() - startTime) / 1000;
+        const processed = status.processed;
+        const total = status.total;
+        
+        if (processed === 0 || elapsed === 0) return '~ расчет времени';
+        
+        const speed = processed / elapsed;
+        const remainingLines = total - processed;
+        const secondsRemainingLines = remainingLines / speed;
+        
+        // Добавляем среднее время для оставшихся этапов
+        const remainingStagesTime = 
+            AVG_STAGE_TIMES.FINALIZATION + 
+            AVG_STAGE_TIMES.INDEXING + 
+            AVG_STAGE_TIMES.STATISTICS;
+        
+        const totalSecondsRemaining = secondsRemainingLines + (remainingStagesTime / 1000);
+        return formatRemainingTimeShort(totalSecondsRemaining);
+    }
+    
+    // Для других этапов используем общий прогресс
+    const elapsed = (Date.now() - startTime) / 1000;
+    if (totalProgress === 0) return '~ расчет времени';
+    
+    const totalProgressPercent = totalProgress / 100;
+    const speed = totalProgressPercent / elapsed;
+    
+    const remainingProgress = 1 - totalProgressPercent;
+    const secondsRemaining = remainingProgress / speed;
+    
+    return formatRemainingTimeShort(secondsRemaining);
+}
+
+function formatRemainingTimeShort(seconds) {
+    if (seconds < 60) {
+        return `~${Math.round(seconds)} сек`;
+    } else if (seconds < 3600) {
+        const minutes = Math.floor(seconds / 60);
+        const secs = Math.round(seconds % 60);
+        return secs > 0 ? `~${minutes} мин ${secs} сек` : `~${minutes} мин`;
+    } else {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.round((seconds % 3600) / 60);
+        return minutes > 0 ? `~${hours} ч ${minutes} мин` : `~${hours} ч`;
+    }
+}
+
+// Новая функция сброса состояния этапов
+function resetStagesState() {
+    currentStage = null;
+    stageStartTime = null;
+    stageProgress = 0;
+    totalProgress = 0;
+    stageEstimates = {};
+    
+    // Обнуляем UI элементы
+    const progressText = document.getElementById('parsingProgressText');
+    if (progressText) {
+        progressText.textContent = '0%';
+    }
+}
+
 
 // Вспомогательная функция для текста кнопки по этапам
 function createCharts(stats) {
@@ -1877,6 +2096,11 @@ function initializeAppWithStatus() {
         cancelBtn.addEventListener('click', cancelCurrentRequest);
     }
 
+    const progressContainer = document.getElementById('parsingProgress');
+    if (progressContainer) {
+        progressContainer.style.display = 'none';
+    }
+
     const startButton = document.getElementById('startParsingBtn');
     if (startButton) {
         startButton.disabled = true;
@@ -2130,36 +2354,37 @@ function showRequestStatus(message, isLoading = false, requestTime = null) {
 // Функция для отображения статуса "Готов"  
 function showReadyStatus(requestTime = null) {
     const statusElement = document.getElementById('statusText');
+    const cancelBtn = document.getElementById('cancelRequestBtn');
+    
     if (!statusElement) return;
     
-    let statusText = 'Время выполнения:';
-    
-    // Защита от нереальных значений времени
-    let safeRequestTime = requestTime;
-    if (safeRequestTime !== null) {
-        // Ограничиваем максимум 24 часа (86400000 мс)
-        safeRequestTime = Math.max(0, Math.min(safeRequestTime, 24 * 3600 * 1000));
-        
-        // Если время меньше 1 мс или больше 24 часов - показываем 0
-        if (safeRequestTime < 1 || safeRequestTime > 24 * 3600 * 1000) {
-            safeRequestTime = 0;
-        }
+    // Очищаем таймаут если есть
+    if (requestStatusTimeout) {
+        clearTimeout(requestStatusTimeout);
+        requestStatusTimeout = null;
     }
     
-    if (safeRequestTime !== null && safeRequestTime > 0) {
-        const formattedTime = formatRequestTime(safeRequestTime);
-        statusElement.setAttribute('data-time', formattedTime);
-        statusText = 'Время выполнения:';
-    } else {
-        statusElement.removeAttribute('data-time');
-        statusText = 'Время выполнения:';
+    let statusText = 'Готов';
+    
+    if (requestTime !== null && requestTime > 0) {
+        const formattedTime = formatRequestTimeShort(requestTime);
+        statusText = `Выполнено за ${formattedTime}`;
+        
+        // Через 5 секунд возвращаем к "Готов"
+        requestStatusTimeout = setTimeout(() => {
+            if (statusElement) {
+                statusElement.textContent = 'Готов';
+                statusElement.removeAttribute('data-time');
+                statusElement.classList.remove('loading');
+            }
+            if (cancelBtn) cancelBtn.style.display = 'none';
+        }, 5000);
     }
     
     statusElement.textContent = statusText;
     statusElement.classList.remove('loading');
     
     // Скрываем кнопку отмены
-    const cancelBtn = document.getElementById('cancelRequestBtn');
     if (cancelBtn) cancelBtn.style.display = 'none';
     
     // Убираем класс loading с контейнера
@@ -2343,7 +2568,7 @@ function resetParsingUI() {
     const progressText = document.getElementById('parsingProgressText');
     const detailsElement = document.getElementById('parsingDetails');
     const stageElement = document.getElementById('parsingStage');
-    const startButton = document.getElementById('startParsingBtn');
+    const progressContainer = document.getElementById('parsingProgress'); // <-- ДОБАВЛЯЕМ ЗДЕСЬ
     
     if (statusElement) {
         statusElement.textContent = 'Парсинг отменен';
@@ -2355,7 +2580,11 @@ function resetParsingUI() {
     }
     
     if (progressText) {
-        progressText.textContent = 'Прогресс: 0%';
+        progressText.textContent = '0%';
+    }
+    
+    if (progressContainer) {
+        progressContainer.style.display = 'none'; // Скрываем контейнер
     }
     
     if (detailsElement) {
@@ -2372,20 +2601,14 @@ function resetParsingUI() {
         stageElement.style.display = 'none';
     }
     
-    if (startButton) {
-        startButton.disabled = false;
-        startButton.textContent = '🚀 Начать парсинг';
-    }
-    
     // Останавливаем polling
     if (parsingInterval) {
         clearInterval(parsingInterval);
         parsingInterval = null;
     }
     
-    // Сбрасываем временные переменные ДО ТОГО как показываем статус
+    // Сбрасываем временные переменные
     if (startTime) {
-        // Вычисляем фактическое время выполнения
         const actualTime = Date.now() - startTime;
         console.log(`Время выполнения парсинга: ${actualTime} мс`);
         startTime = null;

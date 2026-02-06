@@ -31,15 +31,22 @@
                         <h3>🔄 Управление парсингом логов</h3>
                     </div>
                     <div class="parsing-content">
-                    <div class="parsing-info">
+                        <div class="parsing-info">
+                            <!-- parsingStatus - название этапа + % этапа -->
                             <div id="parsingStatus">Готов к работе</div>
-                            <div id="parsingDetails" class="parsing-details" style="display: none;"></div>
-                            <div id="parsingStage" class="parsing-stage" style="display: none;"></div>
+                            
+                            <!-- parsingDetails - обработанные строки + общее время -->
+                            <div id="parsingDetails" class="parsing-details"></div>
+                            
+                            <!-- parsingStage - скрыт всегда -->
+                            <div id="parsingStage" class="parsing-stage"></div>
+                            
+                            <!-- parsingProgress - скрыт по умолчанию, показывается только при парсинге -->
                             <div id="parsingProgress" class="progress-container">
                                 <div class="progress-bar">
                                     <div id="parsingProgressBar" class="progress-fill" style="width: 0%"></div>
                                 </div>
-                                <div id="parsingProgressText" class="progress-info">Прогресс: 0%</div>
+                                <div id="parsingProgressText" class="progress-info">0%</div>
                             </div>
                         </div>
                         <div class="file-input-group">
