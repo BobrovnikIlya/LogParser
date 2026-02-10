@@ -751,11 +751,11 @@ function startProgressPolling() {
                 
                 // Если парсинг завершен
                 if (!data.isParsing && data.progress >= 100) {
+                    const totalTime = Date.now() - startTime;
+                    showRequestStatus(`Парсинг завершен: `, false, totalTime);
                     console.log('✅ Парсинг завершен, останавливаем polling');
                     stopProgressPolling();
                     resetRequestState();
-                    
-
                 }
             }
         } catch (error) {
@@ -1117,8 +1117,8 @@ function updateParsingUI(status) {
             }
             
             if (detailsElement) {
-                const totalTime = startTime ? ((Date.now() - startTime) / 1000).toFixed(1) : '?';
-                detailsElement.textContent = `Время выполнения: ${totalTime} сек`;
+                const totalMs = startTime ? (Date.now() - startTime) : 0;
+                detailsElement.textContent = `Время выполнения: ${formatRequestTime(totalMs)}`;
             }
             
         } else {
