@@ -1074,50 +1074,27 @@ function updateParsingUI(status) {
     const progressBar = document.getElementById('parsingProgressBar');
     const progressText = document.getElementById('parsingProgressText');
     const detailsElement = document.getElementById('parsingDetails');
-    const stageElement = document.getElementById('parsingStage');
     const progressContainer = document.getElementById('parsingProgress');
     
     if (status.isParsing) {
-        // Определяем текущий этап
-        const stageInfo = parseStageFromStatus(status.status || '');
-        currentStage = stageInfo.stage;
-        
-        // Скрываем stageElement
-        if (stageElement) {
-            stageElement.style.display = 'none';
-        }
-        
         // Показываем контейнер прогресса
         if (progressContainer) {
             progressContainer.style.display = 'block';
         }
         
-        // Рассчитываем прогресс этапа
-        const stageWeight = STAGE_WEIGHTS[currentStage] || 0;
-        const stageProgressPercent = Math.min(100, Math.max(0, status.progress || 0));
-        stageProgress = stageProgressPercent;
-        
-        // Рассчитываем общий прогресс
-        totalProgress = calculateTotalProgress(currentStage, stageProgressPercent);
+        // Обновляем прогресс-бар и процент общего прогресса
+        progressBar.style.width = status.progress + '%';
+        progressText.textContent = `${Math.round(status.progress)}%`;
         
         // Обновляем parsingStatus (название этапа + % этапа)
-        statusElement.textContent = `${stageInfo.name} (${Math.round(stageProgressPercent)}%)`;
+        statusElement.textContent = `${status.stageName} (${Math.round(status.stageProgress)}%)`;
         statusElement.style.color = 'var(--accent)';
-        
-        // Обновляем прогресс-бар и процент общего прогресса
-        progressBar.style.width = totalProgress + '%';
-        progressText.textContent = `${Math.round(totalProgress)}%`; // Проценты видимы
         
         // Обновляем parsingDetails (обработанные строки + общее время)
         if (detailsElement) {
             const processed = status.processed?.toLocaleString() || '0';
             const total = status.total?.toLocaleString() || '0';
-            const remainingTime = calculateRemainingTimeWithStages(
-                status, 
-                currentStage, 
-                stageProgressPercent,
-                totalProgress
-            );
+            const remainingTime = status.remaining || '~ расчет времени';
             
             // Форматируем время в удобный вид
             const formattedTime = remainingTime.replace('осталось: ~', '');
@@ -1144,18 +1121,6 @@ function updateParsingUI(status) {
                 detailsElement.textContent = `Время выполнения: ${totalTime} сек`;
             }
             
-            // Показываем время выполнения в request-status
-            const requestTime = startTime ? Date.now() - startTime : 0;
-            showRequestStatus(`Выполнено за ${formatRequestTimeShort(requestTime)}`, false, requestTime);
-            
-            // Сброс состояния этапов
-            resetStagesState();
-            
-            // После 3 секунд показываем "Готов"
-            setTimeout(() => {
-                showReadyStatus(requestTime);
-            }, 3000);
-            
         } else {
             // Парсинг отменен или прерван
             statusElement.textContent = status.status || 'Готов к работе';
@@ -1167,20 +1132,6 @@ function updateParsingUI(status) {
             }
             
             if (detailsElement) detailsElement.style.display = 'none';
-            
-            // Сброс состояния этапов при отмене
-            resetStagesState();
-            
-            // Показываем время выполнения даже при отмене
-            if (startTime) {
-                const requestTime = Date.now() - startTime;
-                showRequestStatus(`Отменено за ${formatRequestTimeShort(requestTime)}`, false, requestTime);
-                
-                // После 2 секунд показываем "Готов"
-                setTimeout(() => {
-                    showReadyStatus(requestTime);
-                }, 2000);
-            }
         }
     }
 }

@@ -73,15 +73,14 @@ public class LogParsingService {
 
     public Map<String, Object> getParsingStatus() {
         System.out.println("Сервис: запрос статуса парсинга");
-        System.out.println("Текущий статус: isParsing=" + currentStatus.isParsing +
-                ", progress=" + currentStatus.progress +
-                ", status=" + currentStatus.status);
 
         Map<String, Object> status = new HashMap<>();
         status.put("success", true);
         status.put("isParsing", currentStatus.isParsing);
         status.put("status", currentStatus.status);
         status.put("progress", currentStatus.progress);
+        status.put("stageProgress", currentStatus.stageProgress);
+        status.put("stageName", currentStatus.stageName);
         status.put("processed", currentStatus.processed);
         status.put("total", currentStatus.total);
 

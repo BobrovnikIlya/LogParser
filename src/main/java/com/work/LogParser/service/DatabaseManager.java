@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service;
 
 import java.sql.*;
 import java.util.List;
+import java.util.function.Consumer;
 
 @Service
 public class DatabaseManager {
@@ -88,6 +89,62 @@ public class DatabaseManager {
         }
     }
 
+    public void createIndexesWithProgressTracking(Connection conn, Consumer<Integer> progressCallback) throws SQLException {
+        System.out.println("Создание индексов с отслеживанием прогресса...");
+
+        // Массив индексов для создания
+        String[] criticalIndexes = {
+                "CREATE INDEX IF NOT EXISTS idx_logs_time ON logs(time)",
+                "CREATE INDEX IF NOT EXISTS idx_logs_username ON logs(username)",
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_active_users ON logs(username) WHERE username != '-'",
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_error_status ON logs(status_code, time) WHERE status_code >= 400"
+        };
+
+        // Создаем индексы и обновляем прогресс
+        for (int i = 0; i < criticalIndexes.length; i++) {
+            try (Statement st = conn.createStatement()) {
+                System.out.println("Создание индекса " + (i + 1) + "/" + criticalIndexes.length);
+                st.execute(criticalIndexes[i]);
+
+                // Обновляем прогресс
+                if (progressCallback != null) {
+                    progressCallback.accept(i + 1);
+                }
+            } catch (SQLException e) {
+                System.err.println("Ошибка создания индекса: " + e.getMessage());
+                throw e;
+            }
+        }
+
+        // Создаем фоновые индексы
+        new Thread(() -> {
+            String[] backgroundIndexes = {
+                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_large_files ON logs(response_size_bytes, url) WHERE response_size_bytes > 1048576",
+                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_ip_filter ON logs(ip) WHERE ip IS NOT NULL"
+            };
+
+            try (Connection bgConn = DriverManager.getConnection(
+                    DatabaseConfig.DB_URL,
+                    DatabaseConfig.DB_USERNAME,
+                    DatabaseConfig.DB_PASSWORD)) {
+
+                for (int i = 0; i < backgroundIndexes.length; i++) {
+                    try (Statement bgStmt = bgConn.createStatement()) {
+                        System.out.println("Создание фонового индекса " + (i + 1) + "/" + backgroundIndexes.length);
+                        bgStmt.execute(backgroundIndexes[i]);
+                    } catch (Exception e) {
+                        System.err.println("⚠ Ошибка создания фонового индекса: " + e.getMessage());
+                    }
+                }
+
+            } catch (Exception e) {
+                System.err.println("❌ Ошибка в фоновом создании индексов: " + e.getMessage());
+            }
+        }).start();
+
+        System.out.println("Все индексы созданы");
+    }
+
     public void clearLogsTable(Connection conn) throws SQLException {
         try (Statement stmt = conn.createStatement()) {
             // Проверяем существование таблицы перед очисткой
@@ -165,56 +222,6 @@ public class DatabaseManager {
             }
             throw e;
         }
-    }
-
-    public void createIndexes(Connection conn) throws SQLException {
-        System.out.println("Создание индексов...");
-
-        // Основные индексы (в текущем соединении)
-        try (Statement st = conn.createStatement()) {
-            String[] criticalIndexes = {
-                    "CREATE INDEX IF NOT EXISTS idx_logs_time ON logs(time)",
-                    "CREATE INDEX IF NOT EXISTS idx_logs_username ON logs(username)"
-            };
-
-            for (String sql : criticalIndexes) {
-                st.execute(sql);
-            }
-        }
-
-        System.out.println("Основные индексы созданы, запускаем создание частичных...");
-
-        // Фоновые индексы в ОТДЕЛЬНОМ соединении
-        new Thread(() -> {
-            try (Connection bgConn = DriverManager.getConnection(
-                    DatabaseConfig.DB_URL,
-                    DatabaseConfig.DB_USERNAME,
-                    DatabaseConfig.DB_PASSWORD)) {
-
-                bgConn.setAutoCommit(true);
-
-                String[] partialIndexes = {
-                        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_active_users ON logs(username) WHERE username != '-'",
-                        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_error_status ON logs(status_code, time) WHERE status_code >= 400",
-                        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_large_files ON logs(response_size_bytes, url) WHERE response_size_bytes > 1048576",
-                        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_ip_filter ON logs(ip) WHERE ip IS NOT NULL"
-                };
-
-                for (String sql : partialIndexes) {
-                    try (Statement bgStmt = bgConn.createStatement()) {
-                        System.out.println("Создание частичного индекса: " + sql.substring(0, 55) + "...");
-                        bgStmt.execute(sql);
-                    } catch (Exception e) {
-                        System.err.println("⚠ Ошибка создания частичного индекса: " + e.getMessage());
-                    }
-                }
-
-                System.out.println("Частичные индексы созданы");
-
-            } catch (Exception e) {
-                System.err.println("❌ Ошибка в фоновом создании индексов: " + e.getMessage());
-            }
-        }).start();
     }
 
     public void updateStatistics(Connection conn) throws SQLException {
