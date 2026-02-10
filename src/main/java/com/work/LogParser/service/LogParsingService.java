@@ -84,16 +84,39 @@ public class LogParsingService {
         status.put("processed", currentStatus.processed);
         status.put("total", currentStatus.total);
 
-        // Рассчитываем оставшееся время если идет парсинг
-        if (currentStatus.isParsing && currentStatus.progress > 0 && currentStatus.startTime > 0) {
-            long elapsed = System.currentTimeMillis() - currentStatus.startTime;
-            double estimatedTotal = elapsed / (currentStatus.progress / 100.0);
-            long remaining = (long) ((estimatedTotal - elapsed) / 1000);
+        // Добавляем временные оценки
+        status.put("parsingDuration", currentStatus.parsingDuration);
+        status.put("estimatedFinalizationTime", currentStatus.estimatedFinalizationTime);
+        status.put("estimatedIndexingTime", currentStatus.estimatedIndexingTime);
+        status.put("estimatedStatisticsTime", currentStatus.estimatedStatisticsTime);
 
-            if (remaining < 60) {
-                status.put("remaining", "~" + remaining + " сек");
-            } else {
-                status.put("remaining", "~" + (remaining / 60) + " мин");
+        // Рассчитываем оставшееся время если идет парсинг
+        if (currentStatus.isParsing && currentStatus.startTime > 0) {
+            long elapsed = System.currentTimeMillis() - currentStatus.startTime;
+
+            // В зависимости от этапа используем разные оценки
+            String stage = currentStatus.stageName;
+            long estimatedStageTime = 0;
+
+            if (stage.contains("Парсинг")) {
+                estimatedStageTime = (long)(currentStatus.total * 0.01); // Примерная оценка
+            } else if (stage.contains("Финализация")) {
+                estimatedStageTime = currentStatus.estimatedFinalizationTime;
+            } else if (stage.contains("Индексация")) {
+                estimatedStageTime = currentStatus.estimatedIndexingTime;
+            } else if (stage.contains("Статистика")) {
+                estimatedStageTime = currentStatus.estimatedStatisticsTime;
+            }
+
+            if (estimatedStageTime > 0 && currentStatus.stageProgress < 100) {
+                long stageElapsed = elapsed - currentStatus.parsingDuration;
+                long stageRemaining = Math.max(0, estimatedStageTime - stageElapsed);
+
+                if (stageRemaining < 60000) {
+                    status.put("remaining", "~" + (stageRemaining / 1000) + " сек");
+                } else {
+                    status.put("remaining", "~" + (stageRemaining / 60000) + " мин");
+                }
             }
 
             status.put("elapsed", elapsed / 1000); // в секундах
@@ -189,11 +212,15 @@ public class LogParsingService {
     }
 
     public List<Map<String, Object>> getTopUrls(int limit) {
-        return getTopUrlsWithFilters(limit, null, null, null, null, null, null);
+        // Ограничиваем максимальный лимит 100
+        int actualLimit = Math.min(limit, 100);
+        return getTopUrlsWithFilters(actualLimit, null, null, null, null, null, null);
     }
 
     public List<Map<String, Object>> getTopUsers(int limit) {
-        return getTopUsersWithFilters(limit, null, null, null, null, null, null);
+        // Ограничиваем максимальный лимит 10
+        int actualLimit = Math.min(limit, 10);
+        return getTopUsersWithFilters(actualLimit, null, null, null, null, null, null);
     }
 
     public List<Integer> getAvailableStatuses() {

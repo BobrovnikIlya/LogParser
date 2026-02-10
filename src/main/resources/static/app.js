@@ -2319,17 +2319,7 @@ function showReadyStatus(requestTime = null) {
     
     if (requestTime !== null && requestTime > 0) {
         const formattedTime = formatRequestTimeShort(requestTime);
-        statusText = `Выполнено за ${formattedTime}`;
-        
-        // Через 5 секунд возвращаем к "Готов"
-        requestStatusTimeout = setTimeout(() => {
-            if (statusElement) {
-                statusElement.textContent = 'Готов';
-                statusElement.removeAttribute('data-time');
-                statusElement.classList.remove('loading');
-            }
-            if (cancelBtn) cancelBtn.style.display = 'none';
-        }, 5000);
+        statusText = `Время выполнения: `;
     }
     
     statusElement.textContent = statusText;
@@ -2343,7 +2333,6 @@ function showReadyStatus(requestTime = null) {
     if (requestStatus) requestStatus.classList.remove('loading');
 }
 
-// Форматирование времени запроса
 // Форматирование времени запроса
 function formatRequestTime(milliseconds) {
     // Защита от некорректных значений

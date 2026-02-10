@@ -11,4 +11,10 @@ public class ParsingStatus {
     public long total = 0;
     public String filePath = "";
     public long startTime = 0;
+
+    // Для отслеживания времени этапов
+    public long parsingDuration = 0;     // Время выполнения парсинга в мс
+    public long estimatedFinalizationTime = 0;
+    public long estimatedIndexingTime = 0;
+    public long estimatedStatisticsTime = 0;
 }

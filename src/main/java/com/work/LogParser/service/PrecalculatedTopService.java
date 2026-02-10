@@ -84,27 +84,17 @@ public class PrecalculatedTopService {
                 DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD)) {
 
             ensurePrecalculatedTopsTableExists(conn);
-
-            // Очищаем старые данные
             clearOldPrecalculatedTops(conn);
 
-            // Прерассчитываем для разных лимитов
-            int[] urlLimits = {10, 50, 100, 500};
-            int[] userLimits = {10, 50, 100};
+            // Топ URL - только 100
+            List<Map<String, Object>> topUrls100 = calculateTopUrls(conn, 100);
+            savePrecalculatedTop(conn, "urls", 100, topUrls100);
+            System.out.println("  ✅ Топ URL (лимит: 100) сохранен");
 
-            // Топ URL
-            for (int limit : urlLimits) {
-                List<Map<String, Object>> topUrls = calculateTopUrls(conn, limit);
-                savePrecalculatedTop(conn, "urls", limit, topUrls);
-                System.out.printf("  ✅ Топ URL (лимит: %d) сохранен%n", limit);
-            }
-
-            // Топ пользователей
-            for (int limit : userLimits) {
-                List<Map<String, Object>> topUsers = calculateTopUsers(conn, limit);
-                savePrecalculatedTop(conn, "users", limit, topUsers);
-                System.out.printf("  ✅ Топ пользователей (лимит: %d) сохранен%n", limit);
-            }
+            // Топ пользователей - только 10
+            List<Map<String, Object>> topUsers10 = calculateTopUsers(conn, 10);
+            savePrecalculatedTop(conn, "users", 10, topUsers10);
+            System.out.println("  ✅ Топ пользователей (лимит: 10) сохранен");
 
             System.out.println("✅ Все прерассчитанные топы обновлены");
 

@@ -756,7 +756,6 @@ button:disabled:hover {
     padding: 6px 10px;
     border-radius: 4px;
     background: rgba(var(--accent-rgb, 66, 153, 225), 0.1);
-    border-left: 2px solid var(--accent);
 }
 
 /* Контейнер для прогресса */
