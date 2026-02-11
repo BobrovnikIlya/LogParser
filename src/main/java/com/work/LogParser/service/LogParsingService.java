@@ -84,46 +84,89 @@ public class LogParsingService {
         status.put("processed", currentStatus.processed);
         status.put("total", currentStatus.total);
 
-        // Добавляем временные оценки
+        // ФАКТИЧЕСКОЕ ВРЕМЯ
         status.put("parsingDuration", currentStatus.parsingDuration);
+        status.put("finalizationDuration", currentStatus.finalizationDuration);
+        status.put("indexingDuration", currentStatus.indexingDuration);
+        status.put("statisticsDuration", currentStatus.statisticsDuration);
+
+        // КОЭФФИЦИЕНТЫ
+        status.put("finalizationFactor", currentStatus.finalizationFactor);
+        status.put("indexingFactor", currentStatus.indexingFactor);
+        status.put("statisticsFactor", currentStatus.statisticsFactor);
+
+        // РАСЧЕТ ОСТАВШЕГОСЯ ВРЕМЕНИ
+        status.put("estimatedTotalTime", currentStatus.estimatedTotalTime);
+        status.put("estimatedParsingTime", currentStatus.estimatedParsingTime);
         status.put("estimatedFinalizationTime", currentStatus.estimatedFinalizationTime);
         status.put("estimatedIndexingTime", currentStatus.estimatedIndexingTime);
         status.put("estimatedStatisticsTime", currentStatus.estimatedStatisticsTime);
 
-        // Рассчитываем оставшееся время если идет парсинг
+
         if (currentStatus.isParsing && currentStatus.startTime > 0) {
             long elapsed = System.currentTimeMillis() - currentStatus.startTime;
 
-            // В зависимости от этапа используем разные оценки
+            // Общее оставшееся время
+            if (currentStatus.estimatedTotalTime > 0) {
+                long remainingTotal = Math.max(0, currentStatus.estimatedTotalTime - elapsed);
+                status.put("remainingTotal", formatDuration(remainingTotal));
+            }
+
+            // Оставшееся время текущего этапа
             String stage = currentStatus.stageName;
-            long estimatedStageTime = 0;
+            long stageRemaining = 0;
 
             if (stage.contains("Парсинг")) {
-                estimatedStageTime = (long)(currentStatus.total * 0.01); // Примерная оценка
+                stageRemaining = Math.max(0, currentStatus.estimatedParsingTime -
+                        (elapsed - currentStatus.parsingDuration));
             } else if (stage.contains("Финализация")) {
-                estimatedStageTime = currentStatus.estimatedFinalizationTime;
+                stageRemaining = Math.max(0, currentStatus.estimatedFinalizationTime -
+                        (elapsed - currentStatus.parsingDuration));
             } else if (stage.contains("Индексация")) {
-                estimatedStageTime = currentStatus.estimatedIndexingTime;
+                stageRemaining = Math.max(0, currentStatus.estimatedIndexingTime -
+                        (elapsed - currentStatus.parsingDuration - currentStatus.finalizationDuration));
             } else if (stage.contains("Статистика")) {
-                estimatedStageTime = currentStatus.estimatedStatisticsTime;
+                stageRemaining = Math.max(0, currentStatus.estimatedStatisticsTime -
+                        (elapsed - currentStatus.parsingDuration - currentStatus.finalizationDuration -
+                                currentStatus.indexingDuration));
             }
 
-            if (estimatedStageTime > 0 && currentStatus.stageProgress < 100) {
-                long stageElapsed = elapsed - currentStatus.parsingDuration;
-                long stageRemaining = Math.max(0, estimatedStageTime - stageElapsed);
-
-                if (stageRemaining < 60000) {
-                    status.put("remaining", "~" + (stageRemaining / 1000) + " сек");
-                } else {
-                    status.put("remaining", "~" + (stageRemaining / 60000) + " мин");
-                }
-            }
-
-            status.put("elapsed", elapsed / 1000); // в секундах
+            status.put("remainingStage", formatDuration(stageRemaining));
         }
-
-        status.put("filePath", currentStatus.filePath);
         return status;
+    }
+
+    private String calculateRemainingTime(ParsingStatus status, long elapsed) {
+        if (status.stageName.contains("Парсинг") && status.total > 0 && status.processed > 0) {
+            double progress = (double) status.processed / status.total;
+            if (progress > 0.01) {
+                long estimatedTotal = (long)(elapsed / progress);
+                long remaining = Math.max(0, estimatedTotal - elapsed);
+                return formatDuration(remaining);
+            }
+        } else if (status.stageName.contains("Финализация") && status.estimatedFinalizationTime > 0) {
+            long stageElapsed = elapsed - status.parsingDuration;
+            long remaining = Math.max(0, status.estimatedFinalizationTime - stageElapsed);
+            return formatDuration(remaining);
+        } else if (status.stageName.contains("Индексация") && status.estimatedIndexingTime > 0) {
+            long stageElapsed = elapsed - status.parsingDuration - status.finalizationDuration;
+            long remaining = Math.max(0, status.estimatedIndexingTime - stageElapsed);
+            return formatDuration(remaining);
+        } else if (status.stageName.contains("Статистика") && status.estimatedStatisticsTime > 0) {
+            long stageElapsed = elapsed - status.parsingDuration - status.finalizationDuration - status.indexingDuration;
+            long remaining = Math.max(0, status.estimatedStatisticsTime - stageElapsed);
+            return formatDuration(remaining);
+        }
+        return "расчет...";
+    }
+
+    private String formatDuration(long ms) {
+        if (ms < 0) return "0 сек";
+        if (ms < 60000) {
+            return "~" + (ms / 1000) + " сек";
+        } else {
+            return "~" + (ms / 60000) + " мин " + ((ms % 60000) / 1000) + " сек";
+        }
     }
 
     public Map<String, Object> getLogsWithStats(int page, int size,

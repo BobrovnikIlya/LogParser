@@ -90,106 +90,65 @@ public class DatabaseManager {
         }
     }
 
-    public void createIndexesWithProgressTracking(Connection conn, Consumer<Integer> progressCallback) throws SQLException {
+    public long createIndexesWithProgressTracking(Connection conn, Consumer<Integer> progressCallback) throws SQLException {
+        long startTime = System.currentTimeMillis();
         System.out.println("Создание индексов с отслеживанием прогресса...");
 
-        // Массив индексов для создания (с оценкой сложности)
         IndexTask[] indexTasks = {
-                // Простые индексы (быстрые) - вес 1
                 new IndexTask("CREATE INDEX IF NOT EXISTS idx_logs_time ON logs(time)", 1, false),
                 new IndexTask("CREATE INDEX IF NOT EXISTS idx_logs_username ON logs(username)", 1, false),
-
-                // Конкурентные индексы (средние) - вес 2
                 new IndexTask("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_active_users ON logs(username) WHERE username != '-'", 2, true),
                 new IndexTask("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_error_status ON logs(status_code, time) WHERE status_code >= 400", 2, true),
                 new IndexTask("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_ip_filter ON logs(ip) WHERE ip IS NOT NULL", 2, true),
-
-                // Сложный конкурентный индекс (самый долгий) - вес 3
                 new IndexTask("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_large_files ON logs(response_size_bytes, url) WHERE response_size_bytes > 1048576", 3, true)
         };
 
         int totalWeight = Arrays.stream(indexTasks).mapToInt(task -> task.weight).sum();
         final int[] currentWeight = {0};
-        final int[] createdCount = {0};
 
-        // Создаем индексы в основном соединении
         for (IndexTask task : indexTasks) {
             if (!task.concurrent) {
                 try (Statement st = conn.createStatement()) {
-                    System.out.println("Создание индекса: " + task.sql);
-                    long startTime = System.currentTimeMillis();
-
                     st.execute(task.sql);
-
-                    long endTime = System.currentTimeMillis();
-                    System.out.println("Индекс создан за " + ((endTime - startTime) / 1000.0) + " сек");
-
-                    createdCount[0]++;
                     currentWeight[0] += task.weight;
-
-                    // Рассчитываем прогресс на основе веса
-                    int progress = (currentWeight[0] * 100) / totalWeight;
                     if (progressCallback != null) {
-                        progressCallback.accept(progress);
+                        progressCallback.accept((currentWeight[0] * 100) / totalWeight);
                     }
-                } catch (SQLException e) {
-                    System.err.println("Ошибка создания индекса: " + e.getMessage());
-                    throw e;
                 }
             }
         }
 
-        // Создаем конкурентные индексы в фоне
         Thread backgroundIndexing = new Thread(() -> {
             try (Connection bgConn = DriverManager.getConnection(
-                    DatabaseConfig.DB_URL,
-                    DatabaseConfig.DB_USERNAME,
-                    DatabaseConfig.DB_PASSWORD)) {
-
+                    DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD)) {
                 bgConn.setAutoCommit(true);
-
                 for (IndexTask task : indexTasks) {
                     if (task.concurrent) {
                         try (Statement bgStmt = bgConn.createStatement()) {
-                            System.out.println("Создание конкурентного индекса: " + task.sql);
-                            long startTime = System.currentTimeMillis();
-
                             bgStmt.execute(task.sql);
-
-                            long endTime = System.currentTimeMillis();
-                            System.out.println("Конкурентный индекс создан за " + ((endTime - startTime) / 1000.0) + " сек");
-
-                            createdCount[0]++;
                             currentWeight[0] += task.weight;
-
-                            // Рассчитываем прогресс на основе веса
-                            int progress = (currentWeight[0] * 100) / totalWeight;
                             if (progressCallback != null) {
-                                progressCallback.accept(progress);
+                                progressCallback.accept((currentWeight[0] * 100) / totalWeight);
                             }
-                        } catch (Exception e) {
-                            System.err.println("⚠ Ошибка создания конкурентного индекса: " + e.getMessage());
                         }
                     }
                 }
-
             } catch (Exception e) {
-                System.err.println("❌ Ошибка в фоновом создании индексов: " + e.getMessage());
+                System.err.println("Ошибка в фоновом создании индексов: " + e.getMessage());
             }
         });
 
         backgroundIndexing.start();
-
-        // Ждем завершения фонового создания индексов
         try {
             backgroundIndexing.join();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
 
-        System.out.println("Все " + createdCount[0] + " индексов созданы");
+        long duration = System.currentTimeMillis() - startTime;
+        System.out.println("Все индексы созданы за " + duration + " мс");
+        return duration;
     }
-
     // Вспомогательный класс для задания на создание индекса
     private static class IndexTask {
         String sql;
@@ -244,7 +203,8 @@ public class DatabaseManager {
         }
     }
 
-    public void finalizeTable(Connection conn, Consumer<Integer> checkpointCallback) throws SQLException {
+    public long finalizeTable(Connection conn) throws SQLException {
+        long startTime = System.currentTimeMillis();
         System.out.println("Финальная обработка таблицы...");
 
         boolean originalAutoCommit = conn.getAutoCommit();
@@ -254,19 +214,10 @@ public class DatabaseManager {
                 conn.setAutoCommit(false);
             }
 
-            // 1. Делаем временную таблицу постоянной
             st.execute("ALTER TABLE logs_unlogged SET LOGGED");
-
-            // 2. Создаем backup старой таблицы
             st.execute("DROP TABLE IF EXISTS logs_old");
-
-            // 3. Переименовываем старую таблицу
             st.execute("ALTER TABLE IF EXISTS logs RENAME TO logs_old");
-
-            // 4. Переименовываем новую таблицу
             st.execute("ALTER TABLE logs_unlogged RENAME TO logs");
-
-            // 5. Пополняем статусы и действия
             populateStatusesAndActions(conn);
 
             if (originalAutoCommit) {
@@ -274,7 +225,9 @@ public class DatabaseManager {
                 conn.setAutoCommit(true);
             }
 
-            System.out.println("Таблица logs заменена атомарно");
+            long duration = System.currentTimeMillis() - startTime;
+            System.out.println("Таблица logs заменена атомарно за " + duration + " мс");
+            return duration;
 
         } catch (Exception e) {
             if (!originalAutoCommit) {

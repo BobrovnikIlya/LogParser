@@ -4,17 +4,32 @@ public class ParsingStatus {
     public boolean isParsing = false;
     public boolean isCancelled = false;
     public String status = "";
-    public double progress = 0;          // Общий прогресс 0-100
-    public double stageProgress = 0;     // Прогресс текущего этапа 0-100
-    public String stageName = "";        // Название текущего этапа
+    public double progress = 0;
+    public double stageProgress = 0;
+    public String stageName = "";
     public long processed = 0;
     public long total = 0;
     public String filePath = "";
     public long startTime = 0;
 
-    // Для отслеживания времени этапов
-    public long parsingDuration = 0;     // Время выполнения парсинга в мс
+    // ФАКТИЧЕСКОЕ ВРЕМЯ ЭТАПОВ
+    public long parsingDuration = 0;
+    public long finalizationDuration = 0;
+    public long indexingDuration = 0;
+    public long statisticsDuration = 0;
+
+    // ОЦЕНОЧНОЕ ВРЕМЯ
+    public long estimatedParsingTime = 0;      // Время этапа парсинга
     public long estimatedFinalizationTime = 0;
     public long estimatedIndexingTime = 0;
     public long estimatedStatisticsTime = 0;
+
+    // ДЛЯ АДАПТИВНЫХ КОЭФФИЦИЕНТОВ
+    public double finalizationFactor = 1.16;
+    public double indexingFactor = 0.03;
+    public double statisticsFactor = 1.10;
+
+    public long estimatedTotalTime = 0;
+
+
 }

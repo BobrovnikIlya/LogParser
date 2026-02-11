@@ -111,13 +111,40 @@ public class LogFileParser {
             currentStatus.stageProgress = 0;
             currentStatus.progress = 0;
 
+            long startCountTime = System.currentTimeMillis();  // ← ДОБАВЬ
             totalLines = estimateLineCountWithNIO(filePath);
+            long countTime = System.currentTimeMillis() - startCountTime;  // ← ДОБАВЬ
             currentStatus.total = totalLines;
 
-            // Обновляем прогресс подсчета строк
-            currentStatus.stageProgress = 100; // Подсчет завершен
-            currentStatus.progress = (int)(COUNTING_WEIGHT * 100); // 5%
-            System.out.println("Строк для обработки: " + totalLines);
+            System.out.println("🔥🔥🔥 ПОДСЧЕТ СТРОК ЗАНЯЛ: " + countTime + " мс");
+            System.out.println("🔥🔥🔥 totalLines = " + totalLines);
+            System.out.println("🔥🔥🔥 СТАВИМ stageProgress = 100");
+
+            currentStatus.stageProgress = 100;
+            currentStatus.progress = (int)(COUNTING_WEIGHT * 100);
+
+            currentStatus.stageName = "🚀 Парсинг данных";
+            currentStatus.stageProgress = 0;
+            parsingStageStartTime = System.currentTimeMillis();
+
+            long estimatedParsingTime = (long)(totalLines * 0.005); // 0.5мс на строку
+            long estimatedTotalTime = (long)(estimatedParsingTime / PARSING_WEIGHT);
+            long estimatedFinalizationTime = (long)(estimatedTotalTime * FINALIZATION_WEIGHT);
+            long estimatedIndexingTime = (long)(estimatedTotalTime * INDEXING_WEIGHT);
+            long estimatedStatisticsTime = (long)(estimatedTotalTime * STATISTICS_WEIGHT);
+
+            currentStatus.estimatedTotalTime = estimatedTotalTime;
+            currentStatus.estimatedParsingTime = estimatedParsingTime;
+            currentStatus.estimatedFinalizationTime = estimatedFinalizationTime;
+            currentStatus.estimatedIndexingTime = estimatedIndexingTime;
+            currentStatus.estimatedStatisticsTime = estimatedStatisticsTime;
+
+            currentStatus.status = String.format("Общее время: ~%d мин | Парсинг: ~%d сек | Финал: ~%d сек | Индексы: ~%d сек | Статистика: ~%d сек",
+                    estimatedTotalTime / 60000,
+                    estimatedParsingTime / 1000,
+                    estimatedFinalizationTime / 1000,
+                    estimatedIndexingTime / 1000,
+                    estimatedStatisticsTime / 1000);
 
             // 3. Очистка и создание таблицы
             databaseManager.clearLogsTable(conn);
@@ -128,8 +155,7 @@ public class LogFileParser {
 
             // 5. Гибридная загрузка
             System.out.println("Начало гибридной загрузки с оптимизированным чтением...");
-            currentStatus.stageName = "🚀 Парсинг данных";
-            parsingStageStartTime = System.currentTimeMillis(); // Начало этапа парсинга
+            // Начало этапа парсинга
 
             // Создаем Piped потоки для потокового COPY
             PipedOutputStream pos = new PipedOutputStream();
@@ -173,15 +199,37 @@ public class LogFileParser {
                         if (lineNumber % 5000 == 0) {
                             currentStatus.processed = lineNumber;
 
-                            // Рассчитываем прогресс этапа парсинга (0-100%)
                             double stageProgress = (lineNumber * 100.0) / totalLines;
-
-                            // Рассчитываем общий прогресс
-                            double overallProgress = COUNTING_WEIGHT * 100 +
-                                    (PARSING_WEIGHT * 100 * stageProgress / 100.0);
+                            double overallProgress = COUNTING_WEIGHT * 100 + (PARSING_WEIGHT * 100 * stageProgress / 100.0);
 
                             currentStatus.stageProgress = (int)stageProgress;
                             currentStatus.progress = (int)overallProgress;
+
+                            long elapsedParsing = System.currentTimeMillis() - parsingStageStartTime;
+
+                            if (stageProgress > 1.0) {
+                                elapsedParsing = System.currentTimeMillis() - parsingStageStartTime;
+                                double elapsedSec = elapsedParsing / 1000.0;
+
+                                // СКОРОСТЬ (строк/сек)
+                                double speed = lineNumber / elapsedSec;
+
+                                // ОСТАЛОСЬ СТРОК
+                                long remainingLines = totalLines - lineNumber;
+
+                                // ОСТАЛОСЬ СЕКУНД
+                                long remainingSec = (long)(remainingLines / speed);
+
+                                // НОВОЕ ОБЩЕЕ ВРЕМЯ ПАРСИНГА = уже прошло + осталось
+                                long newEstimatedParsingTime = elapsedParsing + (remainingSec * 1000);
+
+                                // СОХРАНЯЕМ
+                                currentStatus.estimatedParsingTime = newEstimatedParsingTime;
+                                currentStatus.estimatedTotalTime = (long)(newEstimatedParsingTime / PARSING_WEIGHT);
+                                currentStatus.estimatedFinalizationTime = (long)(currentStatus.estimatedTotalTime * FINALIZATION_WEIGHT);
+                                currentStatus.estimatedIndexingTime = (long)(currentStatus.estimatedTotalTime * INDEXING_WEIGHT);
+                                currentStatus.estimatedStatisticsTime = (long)(currentStatus.estimatedTotalTime * STATISTICS_WEIGHT);
+                            }
                         }
                     }
                 }
@@ -208,9 +256,10 @@ public class LogFileParser {
 
             // 6. Восстановление настроек БД
             databaseManager.restoreConnectionSettings(conn);
-
-            // 7. Финализация если есть данные
+            estimatedFinalizationTime = currentStatus.estimatedFinalizationTime;
+            // 7. completeProcessing
             if (totalRecords > 0 && !currentStatus.isCancelled) {
+
                 completeProcessing(conn, currentStatus, startTime, totalLines, totalRecords,
                         COUNTING_WEIGHT, PARSING_WEIGHT, FINALIZATION_WEIGHT,
                         INDEXING_WEIGHT, STATISTICS_WEIGHT, parsingStageDuration);
@@ -361,205 +410,178 @@ public class LogFileParser {
 
         System.out.println("Завершающая обработка данных...");
 
-        // Оценка времени для остальных этапов на основе времени парсинга
-        double estimatedFinalizationTime = parsingDuration * (400.0 / 345.0); // ~1.16x от парсинга
-        double[] estimatedTimes = new double[2];
-        estimatedTimes[0] = parsingDuration * (10.0 / 345.0);    // Индексация: 0.029x от парсинга
-        estimatedTimes[1] = parsingDuration * (380.0 / 345.0);   // Статистика: ~1.10x от парсинга
+        // СОХРАНЯЕМ ФАКТИЧЕСКОЕ ВРЕМЯ ПАРСИНГА
+        status.parsingDuration = parsingDuration;
 
-        long currentTime = System.currentTimeMillis();
+        // РАССЧИТЫВАЕМ ОБЩЕЕ ВРЕМЯ НА ОСНОВЕ ВЕСОВ
+        long estimatedTotalTime = (long)(parsingDuration / parsingWeight);
+        status.estimatedTotalTime = estimatedTotalTime;
 
-        // Этап финализации таблицы (44.2% общего прогресса)
+        // ЭТАП ФИНАЛИЗАЦИИ
         status.stageName = "🗃️ Финализация таблицы";
         status.stageProgress = 0;
 
-        AtomicBoolean finalizationCompleted = new AtomicBoolean(false);
-        AtomicLong actualFinalizationTime = new AtomicLong(0);
-
-        Thread finalizationThread = new Thread(() -> {
-            try {
-                long finalizationStartTime = System.currentTimeMillis();
-
-                // Финализация таблицы (без передачи прогресса)
-                databaseManager.finalizeTable(conn, null);
-
-                long finalizationEndTime = System.currentTimeMillis();
-                actualFinalizationTime.set(finalizationEndTime - finalizationStartTime);
-                finalizationCompleted.set(true);
-
-                System.out.println("Финализация выполнена за " + (actualFinalizationTime.get() / 1000.0) + " сек");
-
-            } catch (Exception e) {
-                System.err.println("Ошибка при финализации: " + e.getMessage());
-                finalizationCompleted.set(true);
-            }
-        });
-
-        finalizationThread.start();
-
-        // Пока финализация выполняется, обновляем прогресс на основе времени
         long finalizationStartTime = System.currentTimeMillis();
+        long finalizationEstimatedTime = (long)(estimatedTotalTime * finalizationWeight);
+        status.estimatedFinalizationTime = finalizationEstimatedTime;
 
-        while (finalizationThread.isAlive()) {
-            long elapsedFinalizationTime = System.currentTimeMillis() - finalizationStartTime;
+        try {
+            // Запускаем финализацию в отдельном потоке
+            Thread finalizationThread = new Thread(() -> {
+                try {
+                    long actualTime = databaseManager.finalizeTable(conn);
+                    status.finalizationDuration = actualTime;
 
-            // Расчет прогресса на основе времени (0-99%)
-            // Не показываем 100% пока поток не завершится
-            double stageProgress = Math.min(99.0, (elapsedFinalizationTime * 100.0) / estimatedFinalizationTime);
+                    // Корректируем коэффициент
+                    if (parsingDuration > 0) {
+                        status.finalizationFactor = (double) actualTime / parsingDuration;
+                    }
+                } catch (Exception e) {
+                    System.err.println("Ошибка финализации: " + e.getMessage());
+                    status.finalizationDuration = System.currentTimeMillis() - finalizationStartTime;
+                }
+            });
 
-            // Расчет общего прогресса с весами
-            double overallProgress = (countingWeight + parsingWeight) * 100 +
-                    (finalizationWeight * 100 * stageProgress / 100.0);
+            finalizationThread.start();
 
-            status.stageProgress = (int) stageProgress;
-            status.progress = (int) overallProgress;
-            status.status = "Финализация таблицы...";
+            // Мониторинг прогресса финализации
+            while (finalizationThread.isAlive()) {
+                long elapsedFinalization = System.currentTimeMillis() - finalizationStartTime;
 
-            Thread.sleep(500); // Обновляем каждые 500мс
+                // ПРОГРЕСС НА ОСНОВЕ ПРОШЕДШЕГО ВРЕМЕНИ
+                int stageProgress = (int) Math.min(99, (elapsedFinalization * 100) / finalizationEstimatedTime);
+                status.stageProgress = stageProgress;
+
+                // ПЕРЕСЧИТЫВАЕМ ОСТАВШЕЕСЯ ВРЕМЯ ЭТАПА
+                long remainingTime = Math.max(0, finalizationEstimatedTime - elapsedFinalization);
+                status.estimatedFinalizationTime = remainingTime;
+
+                // ОБЩИЙ ПРОГРЕСС
+                double overallProgress = (countingWeight + parsingWeight) * 100 +
+                        (finalizationWeight * 100 * stageProgress / 100.0);
+                status.progress = (int) overallProgress;
+
+                Thread.sleep(500);
+            }
+
+        } catch (Exception e) {
+            System.err.println("Ошибка при финализации: " + e.getMessage());
+            status.finalizationDuration = System.currentTimeMillis() - finalizationStartTime;
         }
 
-        // После завершения потока устанавливаем 100%
+        // ФИНАЛИЗАЦИЯ ЗАВЕРШЕНА
         status.stageProgress = 100;
+        status.estimatedFinalizationTime = 0; // Время этапа = 0
         status.progress = (int)((countingWeight + parsingWeight + finalizationWeight) * 100);
-        status.status = "Финализация таблицы завершена";
 
-        // Короткая пауза для визуализации
-        Thread.sleep(300);
-
-        currentTime = System.currentTimeMillis();
-
-        // Этап создания индексов (30% общего)
+        // ЭТАП ИНДЕКСАЦИИ
         status.stageName = "📈 Создание индексов";
         status.stageProgress = 0;
 
-// Для отслеживания завершения индексации
-        AtomicBoolean indexingCompleted = new AtomicBoolean(false);
-        final int[] currentIndexProgress = {0};
-        final int totalIndexes = 6;
-        final int totalIndexWeight = 11;
-
-        AtomicInteger currentIndexWeight = new AtomicInteger(0);
-
-        Thread indexingThread = new Thread(() -> {
-            try {
-                databaseManager.createIndexesWithProgressTracking(conn, (weightProgress) -> {
-                    currentIndexWeight.set(weightProgress);
-                });
-                indexingCompleted.set(true);
-            } catch (Exception e) {
-                System.err.println("Ошибка при создании индексов: " + e.getMessage());
-                indexingCompleted.set(true);
-            }
-        });
-
-        indexingThread.start();
-
-// Пока индексация выполняется, обновляем прогресс
         long indexingStartTime = System.currentTimeMillis();
-        while (indexingThread.isAlive()) {
-            long elapsedIndexingTime = System.currentTimeMillis() - indexingStartTime;
+        long indexingEstimatedTime = (long)(status.estimatedTotalTime * indexingWeight);
+        status.estimatedIndexingTime = indexingEstimatedTime;
 
-            // Прогресс на основе времени и количества созданных индексов
-            double timeBasedProgress = Math.min(99, (elapsedIndexingTime * 100.0) / estimatedTimes[0]);
-            double indexBasedProgress = Math.min(99, (currentIndexWeight.get() * 100.0) / totalIndexWeight);
+        try {
+            Thread indexingThread = new Thread(() -> {
+                try {
+                    long actualTime = databaseManager.createIndexesWithProgressTracking(conn, (progress) -> {
+                        status.stageProgress = progress;
 
-            // Комбинированный прогресс, но не более 99%
-            double stageProgress = Math.min(99, (timeBasedProgress * 0.5) + (indexBasedProgress * 0.5));
+                        // ПЕРЕСЧИТЫВАЕМ ОСТАВШЕЕСЯ ВРЕМЯ
+                        long elapsedIndexing = System.currentTimeMillis() - indexingStartTime;
+                        long remainingTime = Math.max(0, indexingEstimatedTime - elapsedIndexing);
+                        status.estimatedIndexingTime = remainingTime;
 
-            double overallProgress = (countingWeight + parsingWeight + finalizationWeight) * 100 +
-                    (indexingWeight * 100 * stageProgress / 100.0);
+                        double overallProgress = (countingWeight + parsingWeight + finalizationWeight) * 100 +
+                                (indexingWeight * 100 * progress / 100.0);
+                        status.progress = (int) overallProgress;
+                    });
+                    status.indexingDuration = actualTime;
 
-            status.stageProgress = (int)stageProgress;
-            status.progress = (int)overallProgress;
-            status.status = String.format("Создание индексов... (%d/%d, %d%%)",
-                    currentIndexProgress[0], totalIndexes, (int)stageProgress);
+                    if (parsingDuration > 0) {
+                        status.indexingFactor = (double) actualTime / parsingDuration;
+                    }
+                } catch (Exception e) {
+                    System.err.println("Ошибка индексации: " + e.getMessage());
+                    status.indexingDuration = System.currentTimeMillis() - indexingStartTime;
+                }
+            });
 
-            Thread.sleep(1000);
+            indexingThread.start();
+            indexingThread.join();
+
+        } catch (Exception e) {
+            System.err.println("Ошибка при индексации: " + e.getMessage());
+            status.indexingDuration = System.currentTimeMillis() - indexingStartTime;
         }
 
-        // После завершения индексации
-        if (indexingCompleted.get()) {
-            status.stageProgress = 100;
-            status.progress = (int)((countingWeight + parsingWeight + finalizationWeight + indexingWeight) * 100);
-            status.status = "Создание индексов завершено";
+        status.stageProgress = 100;
+        status.estimatedIndexingTime = 0;
+        status.progress = (int)((countingWeight + parsingWeight + finalizationWeight + indexingWeight) * 100);
 
-            Thread.sleep(500);
-        } else {
-            status.stageProgress = 100;
-            status.progress = (int)((countingWeight + parsingWeight + finalizationWeight + indexingWeight) * 100);
-            status.status = "Индексация завершена (с ошибкой)";
-        }
-
-        currentTime = System.currentTimeMillis();
-
-        // Этап обновления статистики (15% общего)
+        // ЭТАП СТАТИСТИКИ
         status.stageName = "📊 Обновление статистики";
         status.stageProgress = 0;
 
-        AtomicBoolean statsCompleted = new AtomicBoolean(false);
-
-        Thread statisticsThread = new Thread(() -> {
-            try {
-                long statsStartTime = System.currentTimeMillis();
-
-                databaseManager.updateStatistics(conn);
-
-                System.out.println("📊 Вычисление и сохранение агрегированной статистики...");
-                aggregatedStatsService.calculateAndSaveDefaultStats();
-
-                System.out.println("🔄 Обновление прерассчитанных топов...");
-                precalculatedTopService.updatePrecalculatedTops();
-
-                long statsEndTime = System.currentTimeMillis();
-                System.out.println("Статистика обновлена за " + ((statsEndTime - statsStartTime) / 1000.0) + " сек");
-
-                statsCompleted.set(true);
-            } catch (Exception e) {
-                System.err.println("⚠ Ошибка обновления статистики: " + e.getMessage());
-                statsCompleted.set(true);
-            }
-        });
-
-        statisticsThread.start();
-
-// Пока статистика выполняется
         long statsStartTime = System.currentTimeMillis();
-        while (statisticsThread.isAlive()) {
-            long elapsedStatsTime = System.currentTimeMillis() - statsStartTime;
-            double stageProgress = Math.min(99, (elapsedStatsTime * 100.0) / estimatedTimes[1]);
+        long statsEstimatedTime = (long)(status.estimatedTotalTime * statisticsWeight);
+        status.estimatedStatisticsTime = statsEstimatedTime;
 
-            double overallProgress = (countingWeight + parsingWeight + finalizationWeight + indexingWeight) * 100 +
-                    (statisticsWeight * 100 * stageProgress / 100.0);
+        try {
+            Thread statsThread = new Thread(() -> {
+                try {
+                    aggregatedStatsService.calculateAndSaveDefaultStats();
+                    precalculatedTopService.updatePrecalculatedTops();
 
-            status.stageProgress = (int)stageProgress;
-            status.progress = (int)overallProgress;
-            status.status = String.format("Обновление статистики... (%d%%)", (int)stageProgress);
+                    long actualTime = System.currentTimeMillis() - statsStartTime;
+                    status.statisticsDuration = actualTime;
 
-            Thread.sleep(1000);
+                    if (parsingDuration > 0) {
+                        status.statisticsFactor = (double) actualTime / parsingDuration;
+                    }
+                } catch (Exception e) {
+                    System.err.println("Ошибка статистики: " + e.getMessage());
+                    status.statisticsDuration = System.currentTimeMillis() - statsStartTime;
+                }
+            });
+
+            statsThread.start();
+
+            while (statsThread.isAlive()) {
+                long elapsedStats = System.currentTimeMillis() - statsStartTime;
+                int stageProgress = (int) Math.min(99, (elapsedStats * 100) / statsEstimatedTime);
+
+                status.stageProgress = stageProgress;
+                status.estimatedStatisticsTime = Math.max(0, statsEstimatedTime - elapsedStats);
+
+                double overallProgress = (countingWeight + parsingWeight + finalizationWeight + indexingWeight) * 100 +
+                        (statisticsWeight * 100 * stageProgress / 100.0);
+                status.progress = (int) overallProgress;
+
+                Thread.sleep(500);
+            }
+
+        } catch (Exception e) {
+            System.err.println("Ошибка статистики: " + e.getMessage());
+            status.statisticsDuration = System.currentTimeMillis() - statsStartTime;
         }
 
-        // После завершения статистики
-        if (statsCompleted.get()) {
-            status.stageProgress = 100;
-            status.progress = 100;
-            status.isParsing = false;
-            status.stageName = "✅ Завершено";
-            status.status = String.format(
-                    "Парсинг завершен за %.1f мин\n" +
-                            "Обработано: %,d строк\n" +
-                            "Добавлено: %,d записей\n" +
-                            "Средняя скорость: %,.0f записей/сек",
-                    (System.currentTimeMillis() - startTime) / 60000.0,
-                    totalLines, totalRecords,
-                    totalRecords / ((System.currentTimeMillis() - startTime) / 1000.0)
-            );
-        } else {
-            status.stageProgress = 100;
-            status.progress = 100;
-            status.isParsing = false;
-            status.stageName = "⚠ Завершено с ошибками";
-            status.status = "Парсинг завершен с ошибками при обновлении статистики";
-        }
+        // ФИНАЛ
+        status.stageProgress = 100;
+        status.estimatedStatisticsTime = 0;
+        status.progress = 100;
+        status.isParsing = false;
+        status.stageName = "✅ Завершено";
+        status.status = String.format(
+                "Парсинг завершен за %.1f мин\n" +
+                        "Парсинг: %.1f сек | Финализация: %.1f сек | Индексация: %.1f сек | Статистика: %.1f сек",
+                (System.currentTimeMillis() - startTime) / 60000.0,
+                parsingDuration / 1000.0,
+                status.finalizationDuration / 1000.0,
+                status.indexingDuration / 1000.0,
+                status.statisticsDuration / 1000.0
+        );
     }
 
     private void finishWithNoData(ParsingStatus status) {

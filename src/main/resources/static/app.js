@@ -6,36 +6,13 @@ let allLogs = [];
 let currentSort = { column: 'time', direction: 'desc' };
 let statusChart, timeChart;
 let parsingInterval = null;
-let selectedFile = null;
 let startTime = null; // используется для оценки оставшегося времени
-const totalStages = 4; // используется в updateProgress
 // Глобальные переменные для управления запросами
 let isRequestInProgress = false;
 let currentAbortController = null;
 let requestStartTime = null;
 let requestStatusTimeout = null;
 let activeRequestType = null;
-
-const STAGE_WEIGHTS = {
-    COUNTING_LINES: 0.05,      // 5%
-    PARSING: 0.30,            // 30%
-    FINALIZATION: 0.20,       // 20%
-    INDEXING: 0.30,           // 30%
-    STATISTICS: 0.15          // 15%
-};
-
-const AVG_STAGE_TIMES = {
-    FINALIZATION: 10000,      // 10 секунд (среднее)
-    INDEXING: 30000,          // 30 секунд (среднее)
-    STATISTICS: 15000         // 15 секунд (среднее)
-};
-
-// ДОБАВИТЬ после других глобальных переменных
-let currentStage = null;
-let stageStartTime = null;
-let stageProgress = 0;
-let totalProgress = 0;
-let stageEstimates = {};
 
 // API endpoints
 const API_ENDPOINTS = {
@@ -154,55 +131,6 @@ function getFilters() {
         action: document.getElementById('action').value,
         search: document.getElementById('search').value
     };
-}
-
-
-function calculateRemainingTime(status) {
-    if (!status.processed || !status.total || !startTime || status.processed === 0) {
-        return 'расчет...';
-    }
-    
-    const elapsed = (Date.now() - startTime) / 1000; // в секундах
-    const processed = status.processed;
-    const total = status.total;
-    
-    if (processed >= total || total <= 0) {
-        return 'завершено';
-    }
-    
-    // Расчет скорости (строк в секунду)
-    const speed = processed / elapsed;
-    
-    if (speed === 0 || speed < 0.001) {
-        return 'расчет...';
-    }
-    
-    // Расчет оставшегося времени
-    const remaining = total - processed;
-    
-    // Защита от деления на ноль и отрицательных значений
-    if (remaining <= 0) {
-        return 'завершено';
-    }
-    
-    const secondsRemaining = remaining / speed;
-    
-    // Ограничиваем максимальное время (24 часа)
-    const maxSeconds = 24 * 3600;
-    const actualSeconds = Math.min(secondsRemaining, maxSeconds);
-    
-    // Форматирование времени
-    if (actualSeconds < 60) {
-        return `осталось: ~${Math.round(actualSeconds)} сек`;
-    } else if (actualSeconds < 3600) {
-        const minutes = Math.floor(actualSeconds / 60);
-        const seconds = Math.round(actualSeconds % 60);
-        return `осталось: ~${minutes} мин ${seconds} сек`;
-    } else {
-        const hours = Math.floor(actualSeconds / 3600);
-        const minutes = Math.round((actualSeconds % 3600) / 60);
-        return `осталось: ~${hours} ч ${minutes} мин`;
-    }
 }
 
 function formatDateTimeLocal(date) {
@@ -524,124 +452,6 @@ function updatePagination(total, current) {
     }
 }
 
-let selectedFilePath = "";
-
-function browseFile() {
-    // Для браузера - показать диалог выбора файла (но путь будет усечен)
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.log,.txt';
-    input.onchange = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            // В браузере мы получим только имя файла, не полный путь
-            document.getElementById('filePathInput').value = file.name;
-            updateFileInfo(file.name, file.size);
-            selectedFilePath = file.name; // Только имя файла
-        }
-    };
-    input.click();
-}
-
-function updateFileInfo(fileName, fileSize) {
-    const fileInfo = document.getElementById('fileInfo');
-    if (fileSize) {
-        const sizeMB = (fileSize / (1024 * 1024)).toFixed(2);
-        fileInfo.textContent = `Файл: ${fileName} (${sizeMB} MB)`;
-        fileInfo.className = 'file-info success';
-    } else {
-        fileInfo.textContent = `Укажите полный путь к файлу на сервере`;
-        fileInfo.className = 'file-info';
-    }
-}
-
-function getSelectedFilePath() {
-    const input = document.getElementById('filePathInput');
-    return input.value.trim();
-}
-
-// async function startParsing() {
-//     const filePathInput = document.getElementById('filePathInput');
-//     const filePath = filePathInput.value.trim();
-//     const startButton = document.getElementById('startParsingBtn');
-//     const originalText = startButton.textContent;
-    
-//     if (!filePath) {
-//         showNotification('Введите путь к файлу логов');
-//         return;
-//     }
-    
-//     try {
-//         startButton.disabled = true;
-//         startButton.textContent = '⏳ Запуск парсинга...';
-        
-//         console.log('🚀 Начало парсинга файла:', filePath);
-        
-//         // Сбрасываем прогресс
-//         resetParsingProgress();
-//         startTime = Date.now();
-        
-//         // 1. Обновляем UI
-//         updateProgressUI('Запуск парсинга...', 0, 'Проверка файла...');
-        
-//         console.log('📤 Отправка запроса на сервер...');
-        
-//         // 2. Отправляем путь к файлу на сервер
-//         const parseResponse = await fetch(API_ENDPOINTS.START_PARSING, {
-//             method: 'POST',
-//             headers: {
-//                 'Content-Type': 'application/json',
-//             },
-//             body: JSON.stringify({ filePath: filePath })
-//         });
-        
-//         console.log('📨 Статус ответа:', parseResponse.status, parseResponse.statusText);
-        
-//         // Проверяем, есть ли контент в ответе
-//         const responseText = await parseResponse.text();
-//         console.log('📋 Текст ответа:', responseText);
-        
-//         if (!parseResponse.ok) {
-//             throw new Error(`HTTP error! status: ${parseResponse.status}`);
-//         }
-        
-//         // Пытаемся распарсить JSON
-//         let parseData;
-//         try {
-//             parseData = JSON.parse(responseText);
-//         } catch (jsonError) {
-//             console.error('❌ Ошибка парсинга JSON:', jsonError);
-//             console.error('Ответ сервера:', responseText);
-//             throw new Error('Сервер вернул некорректный ответ. Проверьте консоль сервера.');
-//         }
-        
-//         console.log('📋 Данные ответа парсинга:', parseData);
-        
-//         if (parseData.success) {
-//             console.log('✅ Парсинг успешно запущен!');
-//             showNotification('Парсинг запущен!', false);
-            
-//             // Сохраняем путь в localStorage
-//             localStorage.setItem('lastLogFilePath', filePath);
-            
-//             // Запускаем отслеживание прогресса
-//             startProgressPolling();
-//         } else {
-//             throw new Error(parseData.error || 'Ошибка запуска парсинга');
-//         }
-        
-//     } catch (error) {
-//         console.error('❌ Ошибка в процессе:', error);
-//         showNotification('Ошибка: ' + error.message);
-        
-//         // Восстанавливаем кнопку
-//         startButton.disabled = false;
-//         startButton.textContent = '🚀 Начать парсинг';
-        
-//         // Сбрасываем прогресс
-//         resetParsingProgress();
-//     }
-// }
 
 function resetParsingProgress() {
     console.log('🔄 Сброс прогресса парсинга');
@@ -689,33 +499,6 @@ function resetParsingProgress() {
     
     console.log('✅ Прогресс парсинга сброшен');
 }
-
-function calculateStageTimeEstimates(totalLines) {
-    // Эмпирические коэффициенты (миллисекунды на строку)
-    const PARSING_SPEED = 0.05; // мс на строку (20 строк/мс)
-    
-    // Расчет времени для этапа парсинга
-    const parsingTime = (totalLines * PARSING_SPEED) / 1000; // в секундах
-    
-    // Расчет общего времени
-    const totalTime = parsingTime + 
-        (AVG_STAGE_TIMES.FINALIZATION / 1000) + 
-        (AVG_STAGE_TIMES.INDEXING / 1000) + 
-        (AVG_STAGE_TIMES.STATISTICS / 1000);
-    
-    return {
-        parsing: parsingTime,
-        total: totalTime,
-        stages: {
-            COUNTING_LINES: 1, // секунда на подсчет
-            PARSING: parsingTime,
-            FINALIZATION: AVG_STAGE_TIMES.FINALIZATION / 1000,
-            INDEXING: AVG_STAGE_TIMES.INDEXING / 1000,
-            STATISTICS: AVG_STAGE_TIMES.STATISTICS / 1000
-        }
-    };
-}
-
 
 function startProgressPolling() {
     console.log('🔄 Запуск polling статуса парсинга');
@@ -1055,6 +838,7 @@ async function updateParsingStatus() {
     try {
         const response = await fetch(API_ENDPOINTS.PARSING_STATUS);
         const data = await response.json();
+        console.log("📊 Статус от сервера:", data);
         
         if (data.success) {
             updateParsingUI(data);
@@ -1070,68 +854,126 @@ async function updateParsingStatus() {
 }
 
 function updateParsingUI(status) {
+    console.log("🎯 updateParsingUI:", status.stageName, status.stageProgress);
     const statusElement = document.getElementById('parsingStatus');
     const progressBar = document.getElementById('parsingProgressBar');
     const progressText = document.getElementById('parsingProgressText');
     const detailsElement = document.getElementById('parsingDetails');
     const progressContainer = document.getElementById('parsingProgress');
     
-    if (status.isParsing) {
-        // Показываем контейнер прогресса
-        if (progressContainer) {
-            progressContainer.style.display = 'block';
-        }
-        
-        // Обновляем прогресс-бар и процент общего прогресса
-        progressBar.style.width = status.progress + '%';
-        progressText.textContent = `${Math.round(status.progress)}%`;
-        
-        // Обновляем parsingStatus (название этапа + % этапа)
-        statusElement.textContent = `${status.stageName} (${Math.round(status.stageProgress)}%)`;
+    if (!statusElement || !progressBar || !progressText) return;
+
+    if (status.stageName && status.stageName.includes('Подсчет строк')) {
+    console.log("📊 ЭТАП ПОДСЧЕТА СТРОК, progress=", status.stageProgress);
+    
+    progressContainer.style.display = 'block';
+    progressBar.style.width = (status.progress || 0) + '%';
+    progressText.textContent = `${Math.round(status.progress || 0)}%`;
+    
+    // ПРИНУДИТЕЛЬНО СТАВИМ 100% ЕСЛИ total > 0
+    if (status.total > 0) {
+        statusElement.textContent = `📊 Подсчет строк (100%)`;
         statusElement.style.color = 'var(--accent)';
         
-        // Обновляем parsingDetails (обработанные строки + общее время)
         if (detailsElement) {
-            const processed = status.processed?.toLocaleString() || '0';
-            const total = status.total?.toLocaleString() || '0';
-            const remainingTime = status.remaining || '~ расчет времени';
-            
-            // Форматируем время в удобный вид
-            const formattedTime = remainingTime.replace('осталось: ~', '');
-            
-            detailsElement.textContent = 
-                `Обработано: ${processed}/${total} строк • ` +
-                `${formattedTime}`;
+            detailsElement.textContent = `Всего строк: ${status.total.toLocaleString()}`;
             detailsElement.style.display = 'block';
         }
         
-    } else {
-        // Парсинг завершен или отменен
-        if (status.progress >= 100) {
-            statusElement.textContent = '✅ Парсинг завершен';
-            statusElement.style.color = '#28a745';
-            
-            // Скрываем прогресс-бар и проценты при успешном завершении
-            if (progressContainer) {
-                progressContainer.style.display = 'none';
+        // ПРИНУДИТЕЛЬНО ПЕРЕКЛЮЧАЕМ НА ПАРСИНГ ЧЕРЕЗ 1 СЕКУНДУ
+        setTimeout(() => {
+            if (status.isParsing) {
+                statusElement.textContent = `🚀 Парсинг данных (0%)`;
             }
+        }, 1000);
+    }
+        return;
+    }
+
+    if (status.isParsing) {
+        progressContainer.style.display = 'block';
+        progressBar.style.width = status.progress + '%';
+        progressText.textContent = `${Math.round(status.progress)}%`;
+        
+        // ========== ОБЩЕЕ ВРЕМЯ И ВРЕМЯ ЭТАПОВ ==========
+        let timeInfo = '';
+        
+        // Общее время всего процесса
+        if (status.estimatedTotalTime) {
+            const totalTimeFormatted = formatRequestTimeShort(status.estimatedTotalTime);
+            timeInfo += `⏱️ Всего: ~${totalTimeFormatted} • `;
+        }
+        
+        // Текущий этап с временем
+        if (status.stageName) {
+            let stageTime = '';
+            if (status.stageName.includes('Парсинг') && status.estimatedParsingTime) {
+                stageTime = formatRequestTimeShort(status.estimatedParsingTime);
+            } else if (status.stageName.includes('Финализация') && status.estimatedFinalizationTime) {
+                stageTime = formatRequestTimeShort(status.estimatedFinalizationTime);
+            } else if (status.stageName.includes('Индексация') && status.estimatedIndexingTime) {
+                stageTime = formatRequestTimeShort(status.estimatedIndexingTime);
+            } else if (status.stageName.includes('Статистика') && status.estimatedStatisticsTime) {
+                stageTime = formatRequestTimeShort(status.estimatedStatisticsTime);
+            }
+            
+            if (stageTime) {
+                statusElement.textContent = `${status.stageName} (${Math.round(status.stageProgress)}%) ~${stageTime}`;
+            } else {
+                statusElement.textContent = `${status.stageName} (${Math.round(status.stageProgress)}%)`;
+            }
+        }
+        
+        // Детальная информация
+        if (detailsElement) {
+            const processed = status.processed?.toLocaleString() || '0';
+            const total = status.total?.toLocaleString() || '0';
+            
+            let detailsText = `Обработано: ${processed}/${total} строк • `;
+            
+            // Оставшееся общее время
+            if (status.remainingTotal) {
+                detailsText += `Осталось: ${status.remainingTotal}`;
+            } else {
+                detailsText += 'расчет времени...';
+            }
+            
+            detailsElement.textContent = detailsText;
+            detailsElement.style.display = 'block';
+        }
+        
+        statusElement.style.color = 'var(--accent)';
+        
+    } else {
+        // Парсинг завершен - показываем фактическое время
+        if (status.progress >= 100) {
+            let finalText = '✅ Парсинг завершен';
+            
+            // Добавляем фактическое время каждого этапа
+            const times = [];
+            if (status.parsingDuration) times.push(`парсинг: ${formatRequestTimeShort(status.parsingDuration)}`);
+            if (status.finalizationDuration) times.push(`финал: ${formatRequestTimeShort(status.finalizationDuration)}`);
+            if (status.indexingDuration) times.push(`индексы: ${formatRequestTimeShort(status.indexingDuration)}`);
+            if (status.statisticsDuration) times.push(`стат: ${formatRequestTimeShort(status.statisticsDuration)}`);
+            
+            if (times.length > 0) {
+                finalText += ` (${times.join(', ')})`;
+            }
+            
+            statusElement.textContent = finalText;
+            statusElement.style.color = '#28a745';
+            progressContainer.style.display = 'none';
             
             if (detailsElement) {
-                const totalMs = startTime ? (Date.now() - startTime) : 0;
-                detailsElement.textContent = `Время выполнения: ${formatRequestTime(totalMs)}`;
+                const totalTime = (status.parsingDuration + status.finalizationDuration + 
+                                  status.indexingDuration + status.statisticsDuration) || 0;
+                detailsElement.textContent = `Общее время: ${formatRequestTimeShort(totalTime)}`;
+                detailsElement.style.display = 'block';
             }
-            
         } else {
-            // Парсинг отменен или прерван
+            progressContainer.style.display = 'none';
             statusElement.textContent = status.status || 'Готов к работе';
-            statusElement.style.color = status.status && status.status.includes('отменен') ? '#dc3545' : 'var(--text)';
-            
-            // Скрываем прогресс-бар и проценты
-            if (progressContainer) {
-                progressContainer.style.display = 'none';
-            }
-            
-            if (detailsElement) detailsElement.style.display = 'none';
+            statusElement.style.color = status.status?.includes('отменен') ? '#dc3545' : 'var(--text)';
         }
     }
 }
@@ -1155,104 +997,18 @@ function formatRequestTimeShort(milliseconds) {
     }
 }
 
-// Новая функция для парсинга этапа из статуса
-function parseStageFromStatus(statusText) {
-    const stages = {
-        'Быстрый подсчет строк': { stage: 'COUNTING_LINES', name: '📊 Подсчет строк' },
-        'Подсчет строк': { stage: 'COUNTING_LINES', name: '📊 Подсчет строк' },
-        'Загрузка данных': { stage: 'PARSING', name: '🚀 Парсинг' },
-        'Парсинг и подготовка данных': { stage: 'PARSING', name: '🚀 Парсинг' },
-        'Финализация таблицы': { stage: 'FINALIZATION', name: '🗃️ Финализация' },
-        'Создание индексов': { stage: 'INDEXING', name: '📈 Индексация' },
-        'Обновление статистики': { stage: 'STATISTICS', name: '📊 Статистика' },
-        'Вычисление статистики': { stage: 'STATISTICS', name: '📊 Статистика' }
-    };
-    
-    for (const [key, value] of Object.entries(stages)) {
-        if (statusText.includes(key)) {
-            return value;
-        }
-    }
-    
-    return { stage: 'PARSING', name: '🚀 Парсинг' };
-}
-
-// Новая функция расчета общего прогресса
-function calculateTotalProgress(currentStage, stageProgressPercent) {
-    let progress = 0;
-    
-    // Добавляем прогресс завершенных этапов
-    for (const [stage, weight] of Object.entries(STAGE_WEIGHTS)) {
-        if (stage === currentStage) {
-            // Текущий этап - добавляем его прогресс
-            progress += weight * (stageProgressPercent / 100);
-            break;
-        } else {
-            // Завершенные этапы - добавляем полностью
-            progress += weight;
-        }
-    }
-    
-    return Math.min(100, progress * 100);
-}
-
-function calculateRemainingTimeWithStages(status, currentStage, stageProgress, totalProgress) {
-    if (!status.processed || !status.total || !startTime) {
-        return '~ расчет времени';
-    }
-    
-    // Если это этап подсчета строк - используем старый расчет
-    if (currentStage === 'COUNTING_LINES') {
-        const result = calculateRemainingTime(status);
-        return result.replace('осталось: ~', '');
-    }
-    
-    // Если это этап парсинга данных
-    if (currentStage === 'PARSING') {
-        const elapsed = (Date.now() - startTime) / 1000;
-        const processed = status.processed;
-        const total = status.total;
-        
-        if (processed === 0 || elapsed === 0) return '~ расчет времени';
-        
-        const speed = processed / elapsed;
-        const remainingLines = total - processed;
-        const secondsRemainingLines = remainingLines / speed;
-        
-        // Добавляем среднее время для оставшихся этапов
-        const remainingStagesTime = 
-            AVG_STAGE_TIMES.FINALIZATION + 
-            AVG_STAGE_TIMES.INDEXING + 
-            AVG_STAGE_TIMES.STATISTICS;
-        
-        const totalSecondsRemaining = secondsRemainingLines + (remainingStagesTime / 1000);
-        return formatRemainingTimeShort(totalSecondsRemaining);
-    }
-    
-    // Для других этапов используем общий прогресс
-    const elapsed = (Date.now() - startTime) / 1000;
-    if (totalProgress === 0) return '~ расчет времени';
-    
-    const totalProgressPercent = totalProgress / 100;
-    const speed = totalProgressPercent / elapsed;
-    
-    const remainingProgress = 1 - totalProgressPercent;
-    const secondsRemaining = remainingProgress / speed;
-    
-    return formatRemainingTimeShort(secondsRemaining);
-}
-
 function formatRemainingTimeShort(seconds) {
+    if (!seconds || seconds <= 0) return 'расчет...';
     if (seconds < 60) {
-        return `~${Math.round(seconds)} сек`;
+        return `${Math.round(seconds)} сек`;
     } else if (seconds < 3600) {
         const minutes = Math.floor(seconds / 60);
         const secs = Math.round(seconds % 60);
-        return secs > 0 ? `~${minutes} мин ${secs} сек` : `~${minutes} мин`;
+        return secs > 0 ? `${minutes} мин ${secs} сек` : `${minutes} мин`;
     } else {
         const hours = Math.floor(seconds / 3600);
         const minutes = Math.round((seconds % 3600) / 60);
-        return minutes > 0 ? `~${hours} ч ${minutes} мин` : `~${hours} ч`;
+        return minutes > 0 ? `${hours} ч ${minutes} мин` : `${hours} ч`;
     }
 }
 
@@ -2017,19 +1773,7 @@ function setupSorting() {
         });
     });
 }
-function formatTime(seconds) {
-    if (seconds < 60) {
-        return `${Math.round(seconds)} сек`;
-    } else if (seconds < 3600) {
-        const minutes = Math.floor(seconds / 60);
-        const secs = Math.round(seconds % 60);
-        return `${minutes} мин ${secs} сек`;
-    } else {
-        const hours = Math.floor(seconds / 3600);
-        const minutes = Math.round((seconds % 3600) / 60);
-        return `${hours} ч ${minutes} мин`;
-    }
-}
+
 // Initialization
 function initializeAppWithStatus() {
     applySavedTheme();
@@ -2294,11 +2038,11 @@ function showRequestStatus(message, isLoading = false, requestTime = null) {
     }
     
     // Сохраняем время выполнения в data-атрибут (для псевдоэлемента CSS)
-    if (requestTime !== null) {
+    if (requestTime !== null && requestTime > 0) {
         const formattedTime = formatRequestTime(requestTime);
-        statusElement.setAttribute('data-time', formattedTime);
+        statusElement.textContent = `${message} (${formattedTime})`;
     } else {
-        statusElement.removeAttribute('data-time');
+        statusElement.textContent = message;
     }
 }
 
@@ -2317,9 +2061,11 @@ function showReadyStatus(requestTime = null) {
     
     let statusText = 'Готов';
     
-    if (requestTime !== null && requestTime > 0) {
-        const formattedTime = formatRequestTimeShort(requestTime);
-        statusText = `Время выполнения: `;
+if (requestTime !== null && requestTime > 0) {
+        const formattedTime = formatRequestTime(requestTime);
+        statusElement.textContent = `Готов (${formattedTime})`;
+    } else {
+        statusElement.textContent = 'Готов';
     }
     
     statusElement.textContent = statusText;
@@ -2334,26 +2080,18 @@ function showReadyStatus(requestTime = null) {
 }
 
 // Форматирование времени запроса
-function formatRequestTime(milliseconds) {
-    // Защита от некорректных значений
-    if (!milliseconds || milliseconds <= 0 || milliseconds > 24 * 3600 * 1000) {
-        return '0 мс';
+function formatRequestTime(ms) {
+    if (!ms || ms <= 0 || ms > 24 * 3600 * 1000) return '0 мс';
+    if (ms < 1000) return `${Math.round(ms)} мс`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(1)} сек`;
+    if (ms < 3600000) {
+        const minutes = Math.floor(ms / 60000);
+        const seconds = Math.round((ms % 60000) / 1000);
+        return seconds > 0 ? `${minutes} мин ${seconds} сек` : `${minutes} мин`;
     }
-    
-    if (milliseconds < 1000) {
-        return `${Math.round(milliseconds)} мс`;
-    } else if (milliseconds < 60000) {
-        const seconds = milliseconds / 1000;
-        return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} сек`;
-    } else if (milliseconds < 3600000) {
-        const minutes = Math.floor(milliseconds / 60000);
-        const seconds = Math.round((milliseconds % 60000) / 1000);
-        return `${minutes} мин ${seconds} сек`;
-    } else {
-        const hours = Math.floor(milliseconds / 3600000);
-        const minutes = Math.round((milliseconds % 3600000) / 60000);
-        return `${hours} ч ${minutes} мин`;
-    }
+    const hours = Math.floor(ms / 3600000);
+    const minutes = Math.round((ms % 3600000) / 60000);
+    return minutes > 0 ? `${hours} ч ${minutes} мин` : `${hours} ч`;
 }
 
 // Функция для завершения запроса с сообщением
