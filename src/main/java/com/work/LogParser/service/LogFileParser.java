@@ -78,15 +78,14 @@ public class LogFileParser {
         long totalLines = 0;
 
         // Временные метки для каждого этапа
-        long parsingStageStartTime = 0;
         long parsingStageDuration = 0;
 
         // Веса этапов
-        final double COUNTING_WEIGHT = 0.0044;     // 0.44%
-        final double PARSING_WEIGHT = 0.3026;      // 30.26%
-        final double FINALIZATION_WEIGHT = 0.3509; // 35.09%
-        final double INDEXING_WEIGHT = 0.0088;     // 0.88%
-        final double STATISTICS_WEIGHT = 0.3333;   // 33.33%
+        final double COUNTING_WEIGHT = 0.0044;      // 0.44% (оставить)
+        final double PARSING_WEIGHT = 386.5 / 1226.5; // ~0.3152 (31.52%)
+        final double FINALIZATION_WEIGHT = 450 / 1226.5; // ~0.3669 (36.69%)
+        final double INDEXING_WEIGHT = 220 / 1226.5;     // ~0.1794 (17.94%)
+        final double STATISTICS_WEIGHT = 170 / 1226.5;   // ~0.1386 (13.86%)
 
         System.out.println("Начало гибридного парсинга с оптимизацией...");
 
@@ -199,8 +198,11 @@ public class LogFileParser {
                 writer.close();
 
                 // Замеряем время парсинга
-                parsingStageDuration = System.currentTimeMillis() - parsingStageStartTime;
+                parsingStageDuration = System.currentTimeMillis() - currentStatus.parsingStageStartTime;
                 System.out.println("Парсинг завершен за " + (parsingStageDuration / 1000.0) + " сек");
+
+                currentStatus.actualParsingTime = parsingStageDuration;
+                currentStatus.parsingCompleted = true;
 
                 // Устанавливаем 100% прогресс парсинга
                 currentStatus.stageProgress = 100;
@@ -380,10 +382,14 @@ public class LogFileParser {
         System.out.println("Завершающая обработка данных...");
 
         // Оценка времени для остальных этапов на основе времени парсинга
-        double estimatedFinalizationTime = parsingDuration * (400.0 / 345.0); // ~1.16x от парсинга
+        double estimatedFinalizationTime = parsingDuration * (450.0 / 386.5); // ~1.164x
         double[] estimatedTimes = new double[2];
-        estimatedTimes[0] = parsingDuration * (10.0 / 345.0);    // Индексация: 0.029x от парсинга
-        estimatedTimes[1] = parsingDuration * (380.0 / 345.0);   // Статистика: ~1.10x от парсинга
+        estimatedTimes[0] = parsingDuration * (220.0 / 386.5);    // Индексация: ~0.569x
+        estimatedTimes[1] = parsingDuration * (170.0 / 386.5);    // Статистика: ~0.440x
+
+        status.estimatedFinalizationTime = (long) estimatedFinalizationTime;
+        status.estimatedIndexingTime = (long) estimatedTimes[0];
+        status.estimatedStatisticsTime = (long) estimatedTimes[1];
 
         long currentTime = System.currentTimeMillis();
 
@@ -443,6 +449,9 @@ public class LogFileParser {
 
         // Короткая пауза для визуализации
         Thread.sleep(300);
+
+        status.actualFinalizationTime = actualFinalizationTime.get();
+        status.finalizationCompleted = true;
 
         currentTime = System.currentTimeMillis();
 
@@ -508,6 +517,9 @@ public class LogFileParser {
             status.status = "Индексация завершена (с ошибкой)";
         }
 
+        status.actualIndexingTime = System.currentTimeMillis() - indexingStartTime;
+        status.indexingCompleted = true;
+
         currentTime = System.currentTimeMillis();
 
         // Этап обновления статистики (15% общего)
@@ -555,6 +567,9 @@ public class LogFileParser {
 
             Thread.sleep(1000);
         }
+
+        status.actualStatisticsTime = System.currentTimeMillis() - statsStartTime;
+        status.statisticsCompleted = true;
 
         // После завершения статистики
         if (statsCompleted.get()) {
