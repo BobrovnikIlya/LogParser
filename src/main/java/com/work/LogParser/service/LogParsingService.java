@@ -54,9 +54,14 @@ public class LogParsingService {
         currentStatus.isCancelled = false;
         currentStatus.startTime = System.currentTimeMillis();
 
+        // ИНИЦИАЛИЗИРУЕМ НОВЫЕ ПОЛЯ
+        currentStatus.parsingSpeed = 0;
+        currentStatus.parsingStageStartTime = 0;
+        currentStatus.lastProgressUpdateTime = System.currentTimeMillis();
+        currentStatus.lastProcessedCount = 0;
+
         System.out.println("Сервис: запуск парсинга в отдельном потоке");
 
-        // Запускаем парсинг в отдельном потоке
         parsingTask = executor.submit(() -> {
             try {
                 logFileParser.parseWithHybridCopy(filePath, currentStatus);
@@ -83,6 +88,7 @@ public class LogParsingService {
         status.put("stageName", currentStatus.stageName);
         status.put("processed", currentStatus.processed);
         status.put("total", currentStatus.total);
+        status.put("filePath", currentStatus.filePath);
 
         // Добавляем временные оценки
         status.put("parsingDuration", currentStatus.parsingDuration);
@@ -90,39 +96,111 @@ public class LogParsingService {
         status.put("estimatedIndexingTime", currentStatus.estimatedIndexingTime);
         status.put("estimatedStatisticsTime", currentStatus.estimatedStatisticsTime);
 
-        // Рассчитываем оставшееся время если идет парсинг
+        // РАСЧЕТ ОСТАВШЕГОСЯ ВРЕМЕНИ
         if (currentStatus.isParsing && currentStatus.startTime > 0) {
             long elapsed = System.currentTimeMillis() - currentStatus.startTime;
+            status.put("elapsed", elapsed / 1000);
 
-            // В зависимости от этапа используем разные оценки
             String stage = currentStatus.stageName;
-            long estimatedStageTime = 0;
 
-            if (stage.contains("Парсинг")) {
-                estimatedStageTime = (long)(currentStatus.total * 0.01); // Примерная оценка
-            } else if (stage.contains("Финализация")) {
-                estimatedStageTime = currentStatus.estimatedFinalizationTime;
-            } else if (stage.contains("Индексация")) {
-                estimatedStageTime = currentStatus.estimatedIndexingTime;
-            } else if (stage.contains("Статистика")) {
-                estimatedStageTime = currentStatus.estimatedStatisticsTime;
-            }
+            // ЭТАП ПАРСИНГА - ИСПРАВЛЕННАЯ ВЕРСИЯ
+            if (stage.contains("Парсинг") || stage.contains("🚀 Парсинг")) {
+                if (currentStatus.total > 0 && currentStatus.processed > 0) {
+                    long now = System.currentTimeMillis();
 
-            if (estimatedStageTime > 0 && currentStatus.stageProgress < 100) {
-                long stageElapsed = elapsed - currentStatus.parsingDuration;
-                long stageRemaining = Math.max(0, estimatedStageTime - stageElapsed);
+                    // Обновляем скорость каждые 2 секунды
+                    if (now - currentStatus.lastProgressUpdateTime > 2000) {
+                        long processedDelta = currentStatus.processed - currentStatus.lastProcessedCount;
+                        long timeDelta = now - currentStatus.lastProgressUpdateTime;
 
-                if (stageRemaining < 60000) {
-                    status.put("remaining", "~" + (stageRemaining / 1000) + " сек");
+                        if (timeDelta > 0 && processedDelta > 0) {
+                            double instantSpeed = (processedDelta * 1000.0) / timeDelta;
+                            // Сглаживание
+                            if (currentStatus.parsingSpeed == 0) {
+                                currentStatus.parsingSpeed = instantSpeed;
+                            } else {
+                                currentStatus.parsingSpeed = currentStatus.parsingSpeed * 0.7 + instantSpeed * 0.3;
+                            }
+                        }
+
+                        currentStatus.lastProgressUpdateTime = now;
+                        currentStatus.lastProcessedCount = currentStatus.processed;
+                    }
+
+                    // Используем сохраненную скорость или вычисляем среднюю
+                    double speed = currentStatus.parsingSpeed;
+                    if (speed <= 0) {
+                        long elapsedParsing = now - currentStatus.parsingStageStartTime;
+                        if (elapsedParsing > 0) {
+                            speed = (currentStatus.processed * 1000.0) / elapsedParsing;
+                        }
+                    }
+
+                    // Расчет оставшегося времени
+                    if (speed > 0) {
+                        long remainingLines = currentStatus.total - currentStatus.processed;
+                        long remainingSeconds = (long) (remainingLines / speed);
+
+                        if (remainingSeconds < 60) {
+                            status.put("remaining", "~" + remainingSeconds + " сек");
+                        } else {
+                            status.put("remaining", "~" + (remainingSeconds / 60) + " мин " +
+                                    (remainingSeconds % 60) + " сек");
+                        }
+                        status.put("processingSpeed", String.format("%.0f", speed) + " строк/сек");
+                    } else {
+                        status.put("remaining", "расчет...");
+                    }
                 } else {
-                    status.put("remaining", "~" + (stageRemaining / 60000) + " мин");
+                    status.put("remaining", "подготовка...");
                 }
             }
+            // ЭТАП ФИНАЛИЗАЦИИ
+            else if (stage.contains("Финализация")) {
+                if (currentStatus.estimatedFinalizationTime > 0 && currentStatus.stageProgress < 100) {
+                    long stageElapsed = elapsed - currentStatus.parsingDuration;
+                    long stageRemaining = Math.max(0,
+                            (long)(currentStatus.estimatedFinalizationTime * (100 - currentStatus.stageProgress) / 100));
 
-            status.put("elapsed", elapsed / 1000); // в секундах
+                    if (stageRemaining < 60000) {
+                        status.put("remaining", "~" + (stageRemaining / 1000) + " сек");
+                    } else {
+                        status.put("remaining", "~" + (stageRemaining / 60000) + " мин");
+                    }
+                }
+            }
+            // ЭТАП ИНДЕКСАЦИИ
+            else if (stage.contains("Индексация")) {
+                if (currentStatus.estimatedIndexingTime > 0 && currentStatus.stageProgress < 100) {
+                    long stageElapsed = elapsed - currentStatus.parsingDuration - currentStatus.estimatedFinalizationTime;
+                    long stageRemaining = Math.max(0,
+                            (long)(currentStatus.estimatedIndexingTime * (100 - currentStatus.stageProgress) / 100));
+
+                    if (stageRemaining < 60000) {
+                        status.put("remaining", "~" + (stageRemaining / 1000) + " сек");
+                    } else {
+                        status.put("remaining", "~" + (stageRemaining / 60000) + " мин");
+                    }
+                }
+            }
+            // ЭТАП СТАТИСТИКИ
+            else if (stage.contains("Статистика")) {
+                if (currentStatus.estimatedStatisticsTime > 0 && currentStatus.stageProgress < 100) {
+                    long stageElapsed = elapsed - currentStatus.parsingDuration
+                            - currentStatus.estimatedFinalizationTime
+                            - currentStatus.estimatedIndexingTime;
+                    long stageRemaining = Math.max(0,
+                            (long)(currentStatus.estimatedStatisticsTime * (100 - currentStatus.stageProgress) / 100));
+
+                    if (stageRemaining < 60000) {
+                        status.put("remaining", "~" + (stageRemaining / 1000) + " сек");
+                    } else {
+                        status.put("remaining", "~" + (stageRemaining / 60000) + " мин");
+                    }
+                }
+            }
         }
 
-        status.put("filePath", currentStatus.filePath);
         return status;
     }
 
