@@ -77,65 +77,331 @@ public class LogParsingService {
     }
 
     public Map<String, Object> getParsingStatus() {
-        System.out.println("Сервис: запрос статуса парсинга");
-
         Map<String, Object> status = new HashMap<>();
-        status.put("success", true);
-        status.put("isParsing", currentStatus.isParsing);
-        status.put("status", currentStatus.status);
-        status.put("progress", currentStatus.progress);
-        status.put("stageProgress", currentStatus.stageProgress);
-        status.put("stageName", currentStatus.stageName);
-        status.put("processed", currentStatus.processed);
-        status.put("total", currentStatus.total);
-        status.put("filePath", currentStatus.filePath);
-        status.put("isCancelled", currentStatus.isCancelled);
 
-        // Добавляем временные оценки
-        status.put("parsingDuration", currentStatus.parsingDuration);
-        status.put("estimatedFinalizationTime", currentStatus.estimatedFinalizationTime);
-        status.put("estimatedIndexingTime", currentStatus.estimatedIndexingTime);
-        status.put("estimatedStatisticsTime", currentStatus.estimatedStatisticsTime);
+        try {
+            status.put("success", true);
+            status.put("isParsing", currentStatus.isParsing);
+            status.put("status", currentStatus.status != null ? currentStatus.status : "");
+            status.put("progress", currentStatus.progress);
+            status.put("stageProgress", currentStatus.stageProgress);
+            status.put("stageName", currentStatus.stageName != null ? currentStatus.stageName : "");
+            status.put("processed", currentStatus.processed);
+            status.put("total", currentStatus.total);
+            status.put("filePath", currentStatus.filePath != null ? currentStatus.filePath : "");
+            status.put("isCancelled", currentStatus.isCancelled);
 
-        // Добавляем фактические времена этапов (новые поля)
-        status.put("actualParsingTime", currentStatus.actualParsingTime);
-        status.put("actualFinalizationTime", currentStatus.actualFinalizationTime);
-        status.put("actualIndexingTime", currentStatus.actualIndexingTime);
-        status.put("actualStatisticsTime", currentStatus.actualStatisticsTime);
+            // ===== РАСЧЕТ ОБЩЕГО ОСТАВШЕГОСЯ ВРЕМЕНИ =====
+            if (currentStatus.isParsing && currentStatus.startTime > 0) {
+                // Вызываем исправленную функцию расчета
+                long totalRemaining = calculateTotalRemainingTime(currentStatus);
+                currentStatus.estimatedTimeRemaining = totalRemaining;
+                status.put("estimatedTimeRemaining", totalRemaining);
 
-        // Флаги завершения этапов
-        status.put("parsingCompleted", currentStatus.parsingCompleted);
-        status.put("finalizationCompleted", currentStatus.finalizationCompleted);
-        status.put("indexingCompleted", currentStatus.indexingCompleted);
-        status.put("statisticsCompleted", currentStatus.statisticsCompleted);
+                // Добавляем оценки времени этапов
+                status.put("estimatedFinalizationTime", currentStatus.estimatedFinalizationTime);
+                status.put("estimatedIndexingTime", currentStatus.estimatedIndexingTime);
+                status.put("estimatedStatisticsTime", currentStatus.estimatedStatisticsTime);
 
-        // РАСЧЕТ ВРЕМЕНИ
-        if (currentStatus.isParsing && currentStatus.startTime > 0) {
-            long now = System.currentTimeMillis();
-            long elapsed = now - currentStatus.startTime;
-            status.put("elapsed", elapsed / 1000);
-
-            String stage = currentStatus.stageName;
-
-            // === ЭТАП ПАРСИНГА ===
-            if (stage.contains("Парсинг") || stage.contains("🚀 Парсинг")) {
-                calculateParsingStageStatus(status, now, elapsed);
+                // Прошедшее время
+                long elapsed = System.currentTimeMillis() - currentStatus.startTime;
+                status.put("elapsed", elapsed);
+                status.put("elapsedFormatted", formatRemainingTime(elapsed));
+            } else {
+                status.put("estimatedTimeRemaining", 0);
+                status.put("estimatedFinalizationTime", 0);
+                status.put("estimatedIndexingTime", 0);
+                status.put("estimatedStatisticsTime", 0);
+                status.put("elapsed", 0);
+                status.put("elapsedFormatted", "0 сек");
             }
-            // === ЭТАП ФИНАЛИЗАЦИИ ===
-            else if (stage.contains("Финализация") || stage.contains("🗃️ Финализация")) {
-                calculateFinalizationStageStatus(status, now, elapsed);
+
+            // ===== ОСТАВШЕЕСЯ ВРЕМЯ ТЕКУЩЕГО ЭТАПА =====
+            if (currentStatus.isParsing) {
+                Map<String, Object> stageStatus = calculateCurrentStageRemaining(currentStatus);
+                status.put("remainingSeconds", stageStatus.get("remainingSeconds"));
+                status.put("remaining", stageStatus.get("remaining"));
+            } else {
+                status.put("remainingSeconds", -1);
+                status.put("remaining", "завершено");
             }
-            // === ЭТАП ИНДЕКСАЦИИ ===
-            else if (stage.contains("Индексация") || stage.contains("📈 Создание индексов")) {
-                calculateIndexingStageStatus(status, now, elapsed);
-            }
-            // === ЭТАП СТАТИСТИКИ ===
-            else if (stage.contains("Статистика") || stage.contains("📊 Обновление статистики")) {
-                calculateStatisticsStageStatus(status, now, elapsed);
-            }
+
+            // ===== ФАКТИЧЕСКИЕ ВРЕМЕНА ЭТАПОВ =====
+            status.put("actualParsingTime", currentStatus.actualParsingTime);
+            status.put("actualFinalizationTime", currentStatus.actualFinalizationTime);
+            status.put("actualIndexingTime", currentStatus.actualIndexingTime);
+            status.put("actualStatisticsTime", currentStatus.actualStatisticsTime);
+
+            // ===== ФЛАГИ ЗАВЕРШЕНИЯ =====
+            status.put("parsingCompleted", currentStatus.parsingCompleted);
+            status.put("finalizationCompleted", currentStatus.finalizationCompleted);
+            status.put("indexingCompleted", currentStatus.indexingCompleted);
+            status.put("statisticsCompleted", currentStatus.statisticsCompleted);
+
+            // ===== ИНФОРМАЦИЯ О СКОРОСТИ =====
+            status.put("parsingSpeed", currentStatus.parsingSpeed);
+
+        } catch (Exception e) {
+            // При любой ошибке возвращаем безопасный статус
+            status.put("success", false);
+            status.put("error", e.getMessage());
+            status.put("isParsing", false);
+            status.put("estimatedTimeRemaining", 0);
         }
 
         return status;
+    }
+
+    private long calculateTotalRemainingTime(ParsingStatus status) {
+        // Защита от null и некорректного состояния
+        if (status == null || !status.isParsing) {
+            return 0;
+        }
+
+        long totalRemaining = 0;
+        long now = System.currentTimeMillis();
+        String stage = status.stageName != null ? status.stageName : "";
+
+        // Константы весов этапов
+        final double PARSING_WEIGHT = 386.5;
+        final double FINALIZATION_WEIGHT = 450.0;
+        final double INDEXING_WEIGHT = 220.0;
+        final double STATISTICS_WEIGHT = 170.0;
+
+        // ===== 1. ОПРЕДЕЛЯЕМ БАЗОВОЕ ВРЕМЯ ПАРСИНГА =====
+        long baseParsingTime = 60000; // 1 минута по умолчанию
+
+        // Если парсинг завершен - используем фактическое время
+        if (status.actualParsingTime > 0) {
+            baseParsingTime = status.actualParsingTime;
+        }
+        // Если парсинг в процессе - рассчитываем на основе скорости
+        else if (status.parsingSpeed > 0.001 && status.total > 0) {
+            double speed = status.parsingSpeed;
+            // Защита от слишком маленькой скорости
+            if (speed < 1) speed = 1000; // минимум 1000 строк/сек
+
+            long totalLines = Math.max(1, status.total);
+            baseParsingTime = (long) ((totalLines / speed) * 1000);
+
+            // Ограничиваем разумными пределами (от 1 секунды до 24 часов)
+            baseParsingTime = Math.max(1000, Math.min(baseParsingTime, 24 * 60 * 60 * 1000));
+        }
+        // Если есть длительность парсинга
+        else if (status.parsingDuration > 0) {
+            baseParsingTime = status.parsingDuration;
+        }
+
+        // ===== 2. РАССЧИТЫВАЕМ ВРЕМЯ ЭТАПОВ =====
+        long estimatedFinalizationTime = (long) (baseParsingTime * (FINALIZATION_WEIGHT / PARSING_WEIGHT));
+        long estimatedIndexingTime = (long) (baseParsingTime * (INDEXING_WEIGHT / PARSING_WEIGHT));
+        long estimatedStatisticsTime = (long) (baseParsingTime * (STATISTICS_WEIGHT / PARSING_WEIGHT));
+
+        // Ограничиваем разумными пределами
+        estimatedFinalizationTime = Math.min(estimatedFinalizationTime, 30 * 60 * 1000); // макс 30 минут
+        estimatedIndexingTime = Math.min(estimatedIndexingTime, 30 * 60 * 1000);
+        estimatedStatisticsTime = Math.min(estimatedStatisticsTime, 30 * 60 * 1000);
+
+        // ===== 3. СОХРАНЯЕМ ОЦЕНКИ В СТАТУС =====
+        status.estimatedFinalizationTime = estimatedFinalizationTime;
+        status.estimatedIndexingTime = estimatedIndexingTime;
+        status.estimatedStatisticsTime = estimatedStatisticsTime;
+
+        // ===== 4. РАСЧЕТ ОСТАВШЕГОСЯ ВРЕМЕНИ ТОЛЬКО ДЛЯ НЕЗАВЕРШЕННЫХ ЭТАПОВ =====
+
+        // ЭТАП ПАРСИНГА
+        if (!status.parsingCompleted) {
+            if (stage.contains("Подсчет строк") || stage.contains("📊 Подсчет")) {
+                // Этап подсчета строк - быстрая оценка
+                totalRemaining += 5000; // 5 секунд на подсчет
+            } else if (status.total > 0 && status.processed > 0 && status.parsingSpeed > 0.001) {
+                // Нормальный парсинг с прогрессом
+                long remainingLines = Math.max(0, status.total - status.processed);
+                double speed = Math.max(1, status.parsingSpeed);
+                long parsingRemainingMs = (long) ((remainingLines / speed) * 1000);
+                totalRemaining += Math.max(1000, Math.min(parsingRemainingMs, 60 * 60 * 1000));
+            } else {
+                // Нет данных о прогрессе - добавляем половину от базового времени
+                totalRemaining += baseParsingTime / 2;
+            }
+        }
+
+        // ЭТАП ФИНАЛИЗАЦИИ
+        if (!status.finalizationCompleted) {
+            if (stage.contains("Финализация") || stage.contains("🗃️ Финализация")) {
+                // Текущий этап - считаем оставшееся время
+                long stageElapsed = status.stageStartTime > 0 ?
+                        Math.max(0, now - status.stageStartTime) : 0;
+
+                int progress = (int) Math.min(99, Math.max(0, status.stageProgress));
+
+                if (progress > 0 && stageElapsed > 0) {
+                    // На основе текущей скорости
+                    double progressPerMs = progress / (double) stageElapsed;
+                    long remainingByActual = (long) ((100 - progress) / progressPerMs);
+                    totalRemaining += Math.max(1000, Math.min(remainingByActual, 15 * 60 * 1000));
+                } else {
+                    // Нет данных о прогрессе
+                    totalRemaining += estimatedFinalizationTime;
+                }
+            } else {
+                // Этап еще не начат
+                totalRemaining += estimatedFinalizationTime;
+            }
+        }
+
+        // ЭТАП ИНДЕКСАЦИИ
+        if (!status.indexingCompleted) {
+            if (stage.contains("Индексация") || stage.contains("📈 Создание индексов")) {
+                long stageElapsed = status.stageStartTime > 0 ?
+                        Math.max(0, now - status.stageStartTime) : 0;
+
+                int progress = (int) Math.min(99, Math.max(0, status.stageProgress));
+
+                if (progress > 0 && stageElapsed > 0) {
+                    double progressPerMs = progress / (double) stageElapsed;
+                    long remainingByActual = (long) ((100 - progress) / progressPerMs);
+                    totalRemaining += Math.max(1000, Math.min(remainingByActual, 30 * 60 * 1000));
+                } else {
+                    totalRemaining += estimatedIndexingTime;
+                }
+            } else {
+                totalRemaining += estimatedIndexingTime;
+            }
+        }
+
+        // ЭТАП СТАТИСТИКИ
+        if (!status.statisticsCompleted) {
+            if (stage.contains("Статистика") || stage.contains("📊 Обновление статистики")) {
+                long stageElapsed = status.stageStartTime > 0 ?
+                        Math.max(0, now - status.stageStartTime) : 0;
+
+                int progress = (int) Math.min(99, Math.max(0, status.stageProgress));
+
+                if (progress > 0 && stageElapsed > 0) {
+                    double progressPerMs = progress / (double) stageElapsed;
+                    long remainingByActual = (long) ((100 - progress) / progressPerMs);
+                    totalRemaining += Math.max(1000, Math.min(remainingByActual, 15 * 60 * 1000));
+                } else {
+                    totalRemaining += estimatedStatisticsTime;
+                }
+            } else {
+                totalRemaining += estimatedStatisticsTime;
+            }
+        }
+
+        // ФИНАЛЬНЫЕ ОГРАНИЧЕНИЯ
+        totalRemaining = Math.max(1000, Math.min(totalRemaining, 2 * 60 * 60 * 1000)); // от 1 сек до 2 часов
+
+        return totalRemaining;
+    }
+
+    /**
+     * Расчет оставшегося времени текущего этапа
+     */
+    private Map<String, Object> calculateCurrentStageRemaining(ParsingStatus status) {
+        Map<String, Object> result = new HashMap<>();
+        long remainingSeconds = -1;
+        String remainingText = "расчет...";
+
+        if (status == null) {
+            result.put("remainingSeconds", -1);
+            result.put("remaining", "нет данных");
+            return result;
+        }
+
+        String stage = status.stageName != null ? status.stageName : "";
+        long now = System.currentTimeMillis();
+
+        try {
+            // ===== СПЕЦИАЛЬНАЯ ОБРАБОТКА ДЛЯ ПОДСЧЕТА СТРОК =====
+            if (stage.contains("Подсчет строк") || stage.contains("📊 Подсчет")) {
+                // Для подсчета строк - быстрая фиксированная оценка
+                remainingSeconds = 5; // максимум 5 секунд на подсчет
+                remainingText = "~5 сек";
+            }
+            // ===== ЭТАП ПАРСИНГА =====
+            else if (stage.contains("Парсинг") || stage.contains("🚀 Парсинг")) {
+                if (status.parsingSpeed > 0.001 && status.total > 0 && status.processed > 0) {
+                    long remainingLines = Math.max(0, status.total - status.processed);
+                    double speed = Math.max(1, status.parsingSpeed); // минимум 1 стр/сек
+                    remainingSeconds = (long) (remainingLines / speed);
+
+                    // Ограничиваем разумными пределами
+                    remainingSeconds = Math.max(1, Math.min(remainingSeconds, 3600)); // макс 1 час
+                    remainingText = formatRemainingTime(remainingSeconds * 1000);
+                } else {
+                    // Нет данных о скорости - даем примерную оценку
+                    if (status.total > 0) {
+                        remainingSeconds = Math.min(300, status.total / 1000); // ~1000 строк/сек
+                        remainingSeconds = Math.max(10, remainingSeconds);
+                        remainingText = "~" + remainingSeconds + " сек";
+                    }
+                }
+            }
+            // ===== ЭТАП ФИНАЛИЗАЦИИ =====
+            else if (stage.contains("Финализация") || stage.contains("🗃️ Финализация")) {
+                long stageElapsed = status.stageStartTime > 0 ?
+                        Math.max(0, now - status.stageStartTime) : 0;
+                int progress = (int) Math.min(99, Math.max(0, status.stageProgress));
+
+                if (progress > 0 && stageElapsed > 0) {
+                    double progressPerMs = progress / (double) stageElapsed;
+                    remainingSeconds = (long) ((100 - progress) / progressPerMs / 1000);
+                } else if (status.estimatedFinalizationTime > 0) {
+                    remainingSeconds = status.estimatedFinalizationTime / 1000;
+                } else {
+                    remainingSeconds = 30; // 30 секунд по умолчанию
+                }
+
+                remainingSeconds = Math.max(1, Math.min(remainingSeconds, 600)); // макс 10 минут
+                remainingText = formatRemainingTime(remainingSeconds * 1000);
+            }
+            // ===== ЭТАП ИНДЕКСАЦИИ =====
+            else if (stage.contains("Индексация") || stage.contains("📈 Создание индексов")) {
+                long stageElapsed = status.stageStartTime > 0 ?
+                        Math.max(0, now - status.stageStartTime) : 0;
+                int progress = (int) Math.min(99, Math.max(0, status.stageProgress));
+
+                if (progress > 0 && stageElapsed > 0) {
+                    double progressPerMs = progress / (double) stageElapsed;
+                    remainingSeconds = (long) ((100 - progress) / progressPerMs / 1000);
+                } else if (status.estimatedIndexingTime > 0) {
+                    remainingSeconds = status.estimatedIndexingTime / 1000;
+                } else {
+                    remainingSeconds = 60; // 1 минута по умолчанию
+                }
+
+                remainingSeconds = Math.max(1, Math.min(remainingSeconds, 1800)); // макс 30 минут
+                remainingText = formatRemainingTime(remainingSeconds * 1000);
+            }
+            // ===== ЭТАП СТАТИСТИКИ =====
+            else if (stage.contains("Статистика") || stage.contains("📊 Обновление статистики")) {
+                long stageElapsed = status.stageStartTime > 0 ?
+                        Math.max(0, now - status.stageStartTime) : 0;
+                int progress = (int) Math.min(99, Math.max(0, status.stageProgress));
+
+                if (progress > 0 && stageElapsed > 0) {
+                    double progressPerMs = progress / (double) stageElapsed;
+                    remainingSeconds = (long) ((100 - progress) / progressPerMs / 1000);
+                } else if (status.estimatedStatisticsTime > 0) {
+                    remainingSeconds = status.estimatedStatisticsTime / 1000;
+                } else {
+                    remainingSeconds = 45; // 45 секунд по умолчанию
+                }
+
+                remainingSeconds = Math.max(1, Math.min(remainingSeconds, 900)); // макс 15 минут
+                remainingText = formatRemainingTime(remainingSeconds * 1000);
+            }
+        } catch (Exception e) {
+            // При любой ошибке возвращаем безопасные значения
+            remainingSeconds = 30;
+            remainingText = "~30 сек";
+        }
+
+        result.put("remainingSeconds", remainingSeconds);
+        result.put("remaining", remainingText);
+        return result;
     }
 
     /**
@@ -373,29 +639,21 @@ public class LogParsingService {
     /**
      * Расчет оставшегося времени для этапа с адаптивной коррекцией
      */
-    private long calculateRemainingTimeForStage(long stageElapsed, int stageProgress, long estimatedTime) {
-        if (stageProgress <= 0) {
-            return estimatedTime;
-        }
+    private long calculateRemainingTimeForStage(long stageElapsed,
+                                                int stageProgress,
+                                                long estimatedTime) {
+        if (stageProgress <= 0) return estimatedTime;
+        if (stageProgress >= 100) return 0;
 
-        if (stageProgress >= 100) {
-            return 0;
-        }
+        long remainingByEstimate = (long)(estimatedTime * (100 - stageProgress) / 100.0);
 
-        // Базовый расчет на основе оценки
-        long remainingByEstimate = (long) (estimatedTime * (100 - stageProgress) / 100.0);
-
-        // Если прошло достаточно времени для точного расчета
         if (stageElapsed > 5000 && stageProgress > 5) {
-            // Расчет на основе фактической скорости
-            double progressPerMs = stageProgress / (double) stageElapsed;
-            long remainingByActual = (long) ((100 - stageProgress) / progressPerMs);
+            double progressPerMs = stageProgress / (double)stageElapsed;
+            long remainingByActual = (long)((100 - stageProgress) / progressPerMs);
 
-            // Адаптивное взвешивание: чем больше прогресс, тем больше доверия к фактической скорости
             double actualWeight = Math.min(0.9, stageProgress / 100.0);
-            double estimateWeight = 1.0 - actualWeight;
-
-            return (long) (remainingByActual * actualWeight + remainingByEstimate * estimateWeight);
+            return (long)(remainingByActual * actualWeight +
+                    remainingByEstimate * (1 - actualWeight));
         }
 
         return remainingByEstimate;

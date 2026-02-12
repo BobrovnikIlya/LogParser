@@ -1086,22 +1086,34 @@ function updateParsingUI(status) {
         progressBar.style.width = status.progress + '%';
         progressText.textContent = `${Math.round(status.progress)}%`;
         
-        // Обновляем parsingStatus (название этапа + % этапа)
-        statusElement.textContent = `${status.stageName} (${Math.round(status.stageProgress)}%)`;
+        // ===== НОВЫЙ ФОРМАТ: название этапа (% этапа) ~оставшееся время этапа =====
+        const stageName = status.stageName || 'Обработка';
+        const stagePercent = Math.round(status.stageProgress || 0);
+        
+        // Получаем оставшееся время этапа
+        let stageRemaining = '~ расчет времени';
+        if (status.remainingSeconds && status.remainingSeconds > 0) {
+            stageRemaining = formatRemainingTimeShort(status.remainingSeconds);
+        }
+        
+        // Формируем строку статуса
+        statusElement.textContent = `${stageName} (${stagePercent}%) ${stageRemaining}`;
         statusElement.style.color = 'var(--accent)';
         
-        // Обновляем parsingDetails (обработанные строки + общее время)
+        // ===== ОБЩЕЕ ВРЕМЯ В detailsElement =====
         if (detailsElement) {
             const processed = status.processed?.toLocaleString() || '0';
             const total = status.total?.toLocaleString() || '0';
-            const remainingTime = status.remaining || '~ расчет времени';
             
-            // Форматируем время в удобный вид
-            const formattedTime = remainingTime.replace('осталось: ~', '');
+            // Общее оставшееся время (всех этапов)
+            let totalRemaining = '~ расчет времени';
+            if (status.estimatedTimeRemaining && status.estimatedTimeRemaining > 0) {
+                totalRemaining = formatRemainingTimeShort(status.estimatedTimeRemaining / 1000);
+            }
             
             detailsElement.textContent = 
                 `Обработано: ${processed}/${total} строк • ` +
-                `${formattedTime}`;
+                `Осталось всего: ${totalRemaining}`;
             detailsElement.style.display = 'block';
         }
         
@@ -1111,7 +1123,6 @@ function updateParsingUI(status) {
             statusElement.textContent = '✅ Парсинг завершен';
             statusElement.style.color = '#28a745';
             
-            // Скрываем прогресс-бар и проценты при успешном завершении
             if (progressContainer) {
                 progressContainer.style.display = 'none';
             }
@@ -1122,11 +1133,9 @@ function updateParsingUI(status) {
             }
             
         } else {
-            // Парсинг отменен или прерван
             statusElement.textContent = status.status || 'Готов к работе';
             statusElement.style.color = status.status && status.status.includes('отменен') ? '#dc3545' : 'var(--text)';
             
-            // Скрываем прогресс-бар и проценты
             if (progressContainer) {
                 progressContainer.style.display = 'none';
             }
@@ -1243,6 +1252,8 @@ function calculateRemainingTimeWithStages(status, currentStage, stageProgress, t
 }
 
 function formatRemainingTimeShort(seconds) {
+    if (!seconds || seconds <= 0) return '~0 сек';
+    
     if (seconds < 60) {
         return `~${Math.round(seconds)} сек`;
     } else if (seconds < 3600) {

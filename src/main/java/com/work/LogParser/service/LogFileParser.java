@@ -81,18 +81,21 @@ public class LogFileParser {
         long parsingStageDuration = 0;
 
         // Веса этапов
-        final double COUNTING_WEIGHT = 0.0044;      // 0.44% (оставить)
-        final double PARSING_WEIGHT = 386.5 / 1226.5; // ~0.3152 (31.52%)
-        final double FINALIZATION_WEIGHT = 450 / 1226.5; // ~0.3669 (36.69%)
-        final double INDEXING_WEIGHT = 220 / 1226.5;     // ~0.1794 (17.94%)
-        final double STATISTICS_WEIGHT = 170 / 1226.5;   // ~0.1386 (13.86%)
+        final double COUNTING_WEIGHT = 0.0044;      // 0.44%
+        final double PARSING_WEIGHT = 386.5 / 1226.5; // ~0.3152
+        final double FINALIZATION_WEIGHT = 450 / 1226.5; // ~0.3669
+        final double INDEXING_WEIGHT = 220 / 1226.5;     // ~0.1794
+        final double STATISTICS_WEIGHT = 170 / 1226.5;   // ~0.1386
 
         System.out.println("Начало гибридного парсинга с оптимизацией...");
 
-        try (Connection conn = DriverManager.getConnection(DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD)) {
+        try (Connection conn = DriverManager.getConnection(
+                DatabaseConfig.DB_URL,
+                DatabaseConfig.DB_USERNAME,
+                DatabaseConfig.DB_PASSWORD)) {
 
-            currentStatus.parsingSpeed = 0;
-            currentStatus.parsingStageStartTime = 0;
+            currentStatus.parsingSpeed = 1000; // Начальная скорость по умолчанию
+            currentStatus.parsingStageStartTime = System.currentTimeMillis();
             currentStatus.lastProgressUpdateTime = System.currentTimeMillis();
             currentStatus.lastProcessedCount = 0;
 
@@ -110,18 +113,45 @@ public class LogFileParser {
                 return;
             }
 
-            // 2. Подсчет строк (5% общего прогресса)
+            // ===== ИСПРАВЛЕНИЕ: ПОДСЧЕТ СТРОК =====
             currentStatus.stageName = "📊 Подсчет строк";
             currentStatus.stageProgress = 0;
             currentStatus.progress = 0;
+            currentStatus.status = "Подсчет строк...";
 
-            totalLines = estimateLineCountWithNIO(filePath);
+            // Запускаем подсчет строк в отдельном потоке с таймаутом
+            final long[] lineCount = new long[1];
+            Thread countThread = new Thread(() -> {
+                try {
+                    lineCount[0] = estimateLineCountWithNIO(filePath);
+                } catch (Exception e) {
+                    System.err.println("Ошибка подсчета строк: " + e.getMessage());
+                    lineCount[0] = 1000000; // 1 млн строк по умолчанию
+                }
+            });
+
+            countThread.start();
+
+            // Ждем максимум 10 секунд
+            try {
+                countThread.join(10000);
+                if (countThread.isAlive()) {
+                    countThread.interrupt();
+                    System.out.println("⚠️ Подсчет строк занял больше 10 секунд, используем оценку");
+                    lineCount[0] = estimateLineCountWithNIO(filePath);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            totalLines = lineCount[0] > 0 ? lineCount[0] : 1000000;
             currentStatus.total = totalLines;
 
-            // Обновляем прогресс подсчета строк
-            currentStatus.stageProgress = 100; // Подсчет завершен
-            currentStatus.progress = (int)(COUNTING_WEIGHT * 100); // 5%
-            System.out.println("Строк для обработки: " + totalLines);
+            // Сразу устанавливаем 100% для этапа подсчета строк
+            currentStatus.stageProgress = 100;
+            currentStatus.progress = (int)(COUNTING_WEIGHT * 100);
+            currentStatus.status = "Подсчет строк завершен: " + String.format("%,d", totalLines) + " строк";
+            System.out.println("Строк для обработки: " + String.format("%,d", totalLines));
 
             // 3. Очистка и создание таблицы
             databaseManager.clearLogsTable(conn);
@@ -202,6 +232,7 @@ public class LogFileParser {
                 System.out.println("Парсинг завершен за " + (parsingStageDuration / 1000.0) + " сек");
 
                 currentStatus.actualParsingTime = parsingStageDuration;
+                currentStatus.parsingDuration = parsingStageDuration;
                 currentStatus.parsingCompleted = true;
 
                 // Устанавливаем 100% прогресс парсинга
@@ -381,19 +412,39 @@ public class LogFileParser {
 
         System.out.println("Завершающая обработка данных...");
 
-        // Оценка времени для остальных этапов на основе времени парсинга
-        double estimatedFinalizationTime = parsingDuration * (450.0 / 386.5); // ~1.164x
-        double[] estimatedTimes = new double[2];
-        estimatedTimes[0] = parsingDuration * (220.0 / 386.5);    // Индексация: ~0.569x
-        estimatedTimes[1] = parsingDuration * (170.0 / 386.5);    // Статистика: ~0.440x
+        // Константы весов этапов
+        final double PARSING_WEIGHT = 386.5;
+        final double FINALIZATION_WEIGHT = 450.0;
+        final double INDEXING_WEIGHT = 220.0;
+        final double STATISTICS_WEIGHT = 170.0;
+        final double TOTAL_WEIGHT = PARSING_WEIGHT + FINALIZATION_WEIGHT +
+                INDEXING_WEIGHT + STATISTICS_WEIGHT;
 
-        status.estimatedFinalizationTime = (long) estimatedFinalizationTime;
-        status.estimatedIndexingTime = (long) estimatedTimes[0];
-        status.estimatedStatisticsTime = (long) estimatedTimes[1];
+        // ✅ ИСПРАВЛЕНИЕ: Расчет времени этапов на основе времени парсинга
+        status.actualParsingTime = parsingDuration;
+        status.parsingDuration = parsingDuration;
+        status.parsingCompleted = true;
+
+        // Время остальных этапов = время парсинга * вес этапа / вес парсинга
+        status.estimatedFinalizationTime = (long) (parsingDuration * (FINALIZATION_WEIGHT / PARSING_WEIGHT));
+        status.estimatedIndexingTime = (long) (parsingDuration * (INDEXING_WEIGHT / PARSING_WEIGHT));
+        status.estimatedStatisticsTime = (long) (parsingDuration * (STATISTICS_WEIGHT / PARSING_WEIGHT));
+
+        // ✅ ИСПРАВЛЕНИЕ: Общее оставшееся время = сумма времен всех незавершенных этапов
+        status.estimatedTimeRemaining = status.estimatedFinalizationTime +
+                status.estimatedIndexingTime +
+                status.estimatedStatisticsTime;
+
+        System.out.printf("📊 Оценка времени этапов (на основе парсинга: %.1f сек):\n", parsingDuration / 1000.0);
+        System.out.printf("   - Финализация: %.1f сек\n", status.estimatedFinalizationTime / 1000.0);
+        System.out.printf("   - Индексация: %.1f сек\n", status.estimatedIndexingTime / 1000.0);
+        System.out.printf("   - Статистика: %.1f сек\n", status.estimatedStatisticsTime / 1000.0);
+        System.out.printf("   - Всего осталось: %.1f сек\n", status.estimatedTimeRemaining / 1000.0);
 
         long currentTime = System.currentTimeMillis();
 
-        // Этап финализации таблицы (44.2% общего прогресса)
+        // === ЭТАП ФИНАЛИЗАЦИИ ===
+        status.stageStartTime = System.currentTimeMillis();
         status.stageName = "🗃️ Финализация таблицы";
         status.stageProgress = 0;
 
@@ -403,16 +454,11 @@ public class LogFileParser {
         Thread finalizationThread = new Thread(() -> {
             try {
                 long finalizationStartTime = System.currentTimeMillis();
-
-                // Финализация таблицы (без передачи прогресса)
                 databaseManager.finalizeTable(conn, null);
-
                 long finalizationEndTime = System.currentTimeMillis();
                 actualFinalizationTime.set(finalizationEndTime - finalizationStartTime);
                 finalizationCompleted.set(true);
-
                 System.out.println("Финализация выполнена за " + (actualFinalizationTime.get() / 1000.0) + " сек");
-
             } catch (Exception e) {
                 System.err.println("Ошибка при финализации: " + e.getMessage());
                 finalizationCompleted.set(true);
@@ -421,17 +467,18 @@ public class LogFileParser {
 
         finalizationThread.start();
 
-        // Пока финализация выполняется, обновляем прогресс на основе времени
+        // Мониторинг финализации
         long finalizationStartTime = System.currentTimeMillis();
-
         while (finalizationThread.isAlive()) {
             long elapsedFinalizationTime = System.currentTimeMillis() - finalizationStartTime;
+            double stageProgress = Math.min(99.0, (elapsedFinalizationTime * 100.0) / status.estimatedFinalizationTime);
 
-            // Расчет прогресса на основе времени (0-99%)
-            // Не показываем 100% пока поток не завершится
-            double stageProgress = Math.min(99.0, (elapsedFinalizationTime * 100.0) / estimatedFinalizationTime);
+            // ✅ ИСПРАВЛЕНИЕ: Обновляем общее оставшееся время
+            long remainingFinalization = (long) (status.estimatedFinalizationTime * (100 - stageProgress) / 100.0);
+            status.estimatedTimeRemaining = remainingFinalization +
+                    status.estimatedIndexingTime +
+                    status.estimatedStatisticsTime;
 
-            // Расчет общего прогресса с весами
             double overallProgress = (countingWeight + parsingWeight) * 100 +
                     (finalizationWeight * 100 * stageProgress / 100.0);
 
@@ -439,32 +486,30 @@ public class LogFileParser {
             status.progress = (int) overallProgress;
             status.status = "Финализация таблицы...";
 
-            Thread.sleep(500); // Обновляем каждые 500мс
+            Thread.sleep(500);
         }
 
-        // После завершения потока устанавливаем 100%
+        // Завершение финализации
         status.stageProgress = 100;
         status.progress = (int)((countingWeight + parsingWeight + finalizationWeight) * 100);
         status.status = "Финализация таблицы завершена";
-
-        // Короткая пауза для визуализации
-        Thread.sleep(300);
-
         status.actualFinalizationTime = actualFinalizationTime.get();
         status.finalizationCompleted = true;
 
+        // ✅ ИСПРАВЛЕНИЕ: Обновляем общее время после финализации
+        status.estimatedTimeRemaining = status.estimatedIndexingTime + status.estimatedStatisticsTime;
+
+        Thread.sleep(300);
         currentTime = System.currentTimeMillis();
 
-        // Этап создания индексов (30% общего)
+        // === ЭТАП ИНДЕКСАЦИИ ===
+        status.stageStartTime = System.currentTimeMillis();
         status.stageName = "📈 Создание индексов";
         status.stageProgress = 0;
 
-// Для отслеживания завершения индексации
         AtomicBoolean indexingCompleted = new AtomicBoolean(false);
         final int[] currentIndexProgress = {0};
-        final int totalIndexes = 6;
         final int totalIndexWeight = 11;
-
         AtomicInteger currentIndexWeight = new AtomicInteger(0);
 
         Thread indexingThread = new Thread(() -> {
@@ -481,48 +526,44 @@ public class LogFileParser {
 
         indexingThread.start();
 
-// Пока индексация выполняется, обновляем прогресс
+        // Мониторинг индексации
         long indexingStartTime = System.currentTimeMillis();
         while (indexingThread.isAlive()) {
             long elapsedIndexingTime = System.currentTimeMillis() - indexingStartTime;
 
-            // Прогресс на основе времени и количества созданных индексов
-            double timeBasedProgress = Math.min(99, (elapsedIndexingTime * 100.0) / estimatedTimes[0]);
+            double timeBasedProgress = Math.min(99, (elapsedIndexingTime * 100.0) / status.estimatedIndexingTime);
             double indexBasedProgress = Math.min(99, (currentIndexWeight.get() * 100.0) / totalIndexWeight);
-
-            // Комбинированный прогресс, но не более 99%
             double stageProgress = Math.min(99, (timeBasedProgress * 0.5) + (indexBasedProgress * 0.5));
+
+            // ✅ ИСПРАВЛЕНИЕ: Обновляем общее оставшееся время
+            long remainingIndexing = (long) (status.estimatedIndexingTime * (100 - stageProgress) / 100.0);
+            status.estimatedTimeRemaining = remainingIndexing + status.estimatedStatisticsTime;
 
             double overallProgress = (countingWeight + parsingWeight + finalizationWeight) * 100 +
                     (indexingWeight * 100 * stageProgress / 100.0);
 
             status.stageProgress = (int)stageProgress;
             status.progress = (int)overallProgress;
-            status.status = String.format("Создание индексов... (%d/%d, %d%%)",
-                    currentIndexProgress[0], totalIndexes, (int)stageProgress);
+            status.status = String.format("Создание индексов... (%d%%)", (int)stageProgress);
 
             Thread.sleep(1000);
         }
 
-        // После завершения индексации
-        if (indexingCompleted.get()) {
-            status.stageProgress = 100;
-            status.progress = (int)((countingWeight + parsingWeight + finalizationWeight + indexingWeight) * 100);
-            status.status = "Создание индексов завершено";
-
-            Thread.sleep(500);
-        } else {
-            status.stageProgress = 100;
-            status.progress = (int)((countingWeight + parsingWeight + finalizationWeight + indexingWeight) * 100);
-            status.status = "Индексация завершена (с ошибкой)";
-        }
-
+        // Завершение индексации
+        status.stageProgress = 100;
+        status.progress = (int)((countingWeight + parsingWeight + finalizationWeight + indexingWeight) * 100);
+        status.status = "Создание индексов завершено";
         status.actualIndexingTime = System.currentTimeMillis() - indexingStartTime;
         status.indexingCompleted = true;
 
+        // ✅ ИСПРАВЛЕНИЕ: Обновляем общее время после индексации
+        status.estimatedTimeRemaining = status.estimatedStatisticsTime;
+
+        Thread.sleep(500);
         currentTime = System.currentTimeMillis();
 
-        // Этап обновления статистики (15% общего)
+        // === ЭТАП СТАТИСТИКИ ===
+        status.stageStartTime = System.currentTimeMillis();
         status.stageName = "📊 Обновление статистики";
         status.stageProgress = 0;
 
@@ -533,16 +574,13 @@ public class LogFileParser {
                 long statsStartTime = System.currentTimeMillis();
 
                 databaseManager.updateStatistics(conn);
-
                 System.out.println("📊 Вычисление и сохранение агрегированной статистики...");
                 aggregatedStatsService.calculateAndSaveDefaultStats();
-
                 System.out.println("🔄 Обновление прерассчитанных топов...");
                 precalculatedTopService.updatePrecalculatedTops();
 
                 long statsEndTime = System.currentTimeMillis();
                 System.out.println("Статистика обновлена за " + ((statsEndTime - statsStartTime) / 1000.0) + " сек");
-
                 statsCompleted.set(true);
             } catch (Exception e) {
                 System.err.println("⚠ Ошибка обновления статистики: " + e.getMessage());
@@ -552,11 +590,15 @@ public class LogFileParser {
 
         statisticsThread.start();
 
-// Пока статистика выполняется
+        // Мониторинг статистики
         long statsStartTime = System.currentTimeMillis();
         while (statisticsThread.isAlive()) {
             long elapsedStatsTime = System.currentTimeMillis() - statsStartTime;
-            double stageProgress = Math.min(99, (elapsedStatsTime * 100.0) / estimatedTimes[1]);
+            double stageProgress = Math.min(99, (elapsedStatsTime * 100.0) / status.estimatedStatisticsTime);
+
+            // ✅ ИСПРАВЛЕНИЕ: Обновляем общее оставшееся время
+            long remainingStatistics = (long) (status.estimatedStatisticsTime * (100 - stageProgress) / 100.0);
+            status.estimatedTimeRemaining = remainingStatistics;
 
             double overallProgress = (countingWeight + parsingWeight + finalizationWeight + indexingWeight) * 100 +
                     (statisticsWeight * 100 * stageProgress / 100.0);
@@ -568,10 +610,12 @@ public class LogFileParser {
             Thread.sleep(1000);
         }
 
+        // Завершение статистики
         status.actualStatisticsTime = System.currentTimeMillis() - statsStartTime;
         status.statisticsCompleted = true;
+        status.estimatedTimeRemaining = 0; // ✅ Все этапы завершены
 
-        // После завершения статистики
+        // Финальный статус
         if (statsCompleted.get()) {
             status.stageProgress = 100;
             status.progress = 100;

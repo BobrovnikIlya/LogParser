@@ -23,6 +23,8 @@ public class ParsingStatus {
     public long lastProgressUpdateTime = 0;
     public long lastProcessedCount = 0;
 
+    public long estimatedTimeRemaining = 0;
+
     // Фактическое время выполнения этапов (мс)
     public long actualParsingTime = 0;
     public long actualFinalizationTime = 0;
