@@ -27,6 +27,9 @@ public class LogFileParser {
     private DatabaseManager databaseManager;
 
     @Autowired
+    private FilterCacheService filterCacheService;
+
+    @Autowired
     private LogParserUtils logParserUtils;
     @Autowired
     private PrecalculatedTopService precalculatedTopService;
@@ -495,6 +498,13 @@ public class LogFileParser {
         status.status = "Финализация таблицы завершена";
         status.actualFinalizationTime = actualFinalizationTime.get();
         status.finalizationCompleted = true;
+
+        try {
+            filterCacheService.invalidateCacheAfterDataChange();
+            System.out.println("🧹 Кэш фильтров очищен после загрузки новых данных");
+        } catch (Exception e) {
+            System.err.println("⚠ Ошибка при очистке кэша: " + e.getMessage());
+        }
 
         // ✅ ИСПРАВЛЕНИЕ: Обновляем общее время после финализации
         status.estimatedTimeRemaining = status.estimatedIndexingTime + status.estimatedStatisticsTime;
