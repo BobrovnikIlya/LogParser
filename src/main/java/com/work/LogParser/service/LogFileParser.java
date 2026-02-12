@@ -92,6 +92,11 @@ public class LogFileParser {
 
         try (Connection conn = DriverManager.getConnection(DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD)) {
 
+            currentStatus.parsingSpeed = 0;
+            currentStatus.parsingStageStartTime = 0;
+            currentStatus.lastProgressUpdateTime = System.currentTimeMillis();
+            currentStatus.lastProcessedCount = 0;
+
             // 1. Подготовка БД
             databaseManager.ensureLogsTableExists(conn);
             databaseManager.createStatusesTable(conn);
@@ -129,7 +134,7 @@ public class LogFileParser {
             // 5. Гибридная загрузка
             System.out.println("Начало гибридной загрузки с оптимизированным чтением...");
             currentStatus.stageName = "🚀 Парсинг данных";
-            parsingStageStartTime = System.currentTimeMillis(); // Начало этапа парсинга
+            currentStatus.parsingStageStartTime = System.currentTimeMillis(); // Начало этапа парсинга
 
             // Создаем Piped потоки для потокового COPY
             PipedOutputStream pos = new PipedOutputStream();
@@ -155,13 +160,11 @@ public class LogFileParser {
                 while ((line = br.readLine()) != null) {
                     lineNumber++;
 
-                    // Проверка отмены
                     if (currentStatus.isCancelled) {
                         System.out.println("Парсинг прерван");
                         break;
                     }
 
-                    // Быстрый парсинг
                     String csvLine = parseLineToCSV(line);
                     if (csvLine != null) {
                         writer.write(csvLine);
@@ -169,14 +172,19 @@ public class LogFileParser {
                         totalRecords++;
                         recordsInBatch++;
 
-                        // Обновление прогресса каждые 5000 строк
                         if (lineNumber % 5000 == 0) {
                             currentStatus.processed = lineNumber;
 
-                            // Рассчитываем прогресс этапа парсинга (0-100%)
-                            double stageProgress = (lineNumber * 100.0) / totalLines;
+                            // ОБНОВЛЯЕМ СКОРОСТЬ КАЖДЫЕ 5000 СТРОК
+                            long currentTime = System.currentTimeMillis();
+                            if (currentStatus.parsingStageStartTime > 0) {
+                                long elapsedSeconds = (currentTime - currentStatus.parsingStageStartTime) / 1000;
+                                if (elapsedSeconds > 0) {
+                                    currentStatus.parsingSpeed = (double) lineNumber / elapsedSeconds;
+                                }
+                            }
 
-                            // Рассчитываем общий прогресс
+                            double stageProgress = (lineNumber * 100.0) / totalLines;
                             double overallProgress = COUNTING_WEIGHT * 100 +
                                     (PARSING_WEIGHT * 100 * stageProgress / 100.0);
 
@@ -339,11 +347,21 @@ public class LogFileParser {
         double batchTime = (currentTime - batchStartTime) / 1000.0;
         double speed = 100000.0 / batchTime;
 
-        // Обновляем статус
+        // ОБНОВЛЯЕМ ПОЛЯ ДЛЯ РАСЧЕТА СКОРОСТИ
         status.processed = lineNumber;
         status.progress = (lineNumber * 100.0) / totalLines;
 
-        // Периодический вывод статистики
+        // Сохраняем скорость обработки
+        if (speed > 0 && speed < 1000000) { // Разумные значения
+            status.parsingSpeed = speed;
+        }
+
+        // Обновляем время последнего прогресса каждые 2 секунды
+        if (currentTime - status.lastProgressUpdateTime > 2000) {
+            status.lastProgressUpdateTime = currentTime;
+            status.lastProcessedCount = lineNumber;
+        }
+
         if (totalRecords % 500000 == 0) {
             System.out.printf("[Прогресс] Обработано: %,d/%,d строк (%.1f%%), " +
                             "Записей: %,d, Скорость: %,.0f строк/сек%n",
