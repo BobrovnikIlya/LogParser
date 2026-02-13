@@ -1075,6 +1075,7 @@ function updateParsingUI(status) {
     const progressText = document.getElementById('parsingProgressText');
     const detailsElement = document.getElementById('parsingDetails');
     const progressContainer = document.getElementById('parsingProgress');
+    const startButton = document.getElementById('startParsingBtn');
     
     if (status.isParsing) {
         // Показываем контейнер прогресса
@@ -1116,6 +1117,13 @@ function updateParsingUI(status) {
                 `Осталось всего: ${totalRemaining}`;
             detailsElement.style.display = 'block';
         }
+
+        // ===== НОВЫЙ КОД: ОБНОВЛЕНИЕ КНОПКИ ПАРСИНГА =====
+        if (startButton) {
+            startButton.disabled = true;
+            startButton.textContent = '⏳ Парсинг...';
+            startButton.setAttribute('data-file-valid', 'false');
+        }
         
     } else {
         // Парсинг завершен или отменен
@@ -1131,6 +1139,13 @@ function updateParsingUI(status) {
                 const totalMs = startTime ? (Date.now() - startTime) : 0;
                 detailsElement.textContent = `Время выполнения: ${formatRequestTime(totalMs)}`;
             }
+
+            // ===== НОВЫЙ КОД: ВОССТАНОВЛЕНИЕ КНОПКИ =====
+            if (startButton) {
+                startButton.disabled = true;
+                startButton.textContent = '🔍 Проверить файл';
+                startButton.setAttribute('data-file-valid', 'false');
+            }
             
         } else {
             statusElement.textContent = status.status || 'Готов к работе';
@@ -1141,6 +1156,13 @@ function updateParsingUI(status) {
             }
             
             if (detailsElement) detailsElement.style.display = 'none';
+
+            // ===== НОВЫЙ КОД: ВОССТАНОВЛЕНИЕ КНОПКИ =====
+            if (startButton) {
+                startButton.disabled = true;
+                startButton.textContent = '🔍 Проверить файл';
+                startButton.setAttribute('data-file-valid', 'false');
+            }
         }
     }
 }
@@ -2042,7 +2064,8 @@ function formatTime(seconds) {
     }
 }
 // Initialization
-function initializeAppWithStatus() {
+// Добавить в конец функции initializeAppWithStatus()
+async function initializeAppWithStatus() {
     applySavedTheme();
     setupSorting();
     loadStatuses();
@@ -2070,7 +2093,7 @@ function initializeAppWithStatus() {
         startButton.textContent = '🔍 Проверить файл';
     }
 
-        // Добавьте обработчик для Enter в поле ввода
+    // Добавьте обработчик для Enter в поле ввода
     const filePathInput = document.getElementById('filePathInput');
     if (filePathInput) {
         filePathInput.addEventListener('keypress', function(e) {
@@ -2081,7 +2104,48 @@ function initializeAppWithStatus() {
     }
     
     // Инициализируем состояние кнопок
-    enableAllButtons(); // Устанавливаем правильное начальное состояние
+    enableAllButtons();
+
+    await restoreParsingState();
+}
+
+async function restoreParsingState() {
+    try {
+        const response = await fetch(API_ENDPOINTS.PARSING_STATUS);
+        const data = await response.json();
+        
+        if (data.success && data.isParsing) {
+            console.log('🔄 Восстановление состояния парсинга после перезагрузки');
+            
+            // Восстанавливаем глобальные переменные
+            startTime = Date.now() - (data.elapsed || 0);
+            
+            // Показываем контейнер прогресса
+            const progressContainer = document.getElementById('parsingProgress');
+            if (progressContainer) {
+                progressContainer.style.display = 'block';
+            }
+            
+            // Восстанавливаем UI
+            updateParsingUI(data);
+            
+            // Перезапускаем polling
+            startProgressPolling();
+            
+            // Блокируем кнопки
+            disableAllButtons();
+            
+            // Обновляем состояние запроса
+            isRequestInProgress = true;
+            activeRequestType = 'parsing';
+            requestStartTime = startTime;
+            
+            // Показываем статус
+            showRequestStatus('Парсинг продолжается...', true);
+        }
+    } catch (error) {
+        console.error('Ошибка восстановления состояния парсинга:', error);
+    }
 }
 
 // Функция проверки начальных данных
@@ -2641,7 +2705,6 @@ function enableAllButtons() {
         button.disabled = false;
     });
 
-    
     // Кнопки в шапке (тема)
     const themeButton = document.querySelector('.header-theme-button button');
     if (themeButton) {
@@ -2656,18 +2719,25 @@ function enableAllButtons() {
         });
     }
     
+    // ===== ИСПРАВЛЕНИЕ: УЧИТЫВАЕМ АКТИВНЫЙ ПАРСИНГ =====
     if (!parsingInterval) {
         const parsingButton = document.getElementById('startParsingBtn');
         const fileInput = document.getElementById('filePathInput');
         
         if (parsingButton && fileInput) {
             const isValid = parsingButton.getAttribute('data-file-valid') === 'true';
-            parsingButton.disabled = !isValid;
-            
-            if (!isValid && fileInput.value.trim()) {
-                parsingButton.textContent = '🔍 Проверить файл';
-            } else if (isValid) {
-                parsingButton.textContent = '🚀 Начать парсинг';
+            // Если парсинг активен - не разблокируем кнопку
+            if (isRequestInProgress && activeRequestType === 'parsing') {
+                parsingButton.disabled = true;
+                parsingButton.textContent = '⏳ Парсинг...';
+            } else {
+                parsingButton.disabled = !isValid;
+                
+                if (!isValid && fileInput.value.trim()) {
+                    parsingButton.textContent = '🔍 Проверить файл';
+                } else if (isValid) {
+                    parsingButton.textContent = '🚀 Начать парсинг';
+                }
             }
         }
     }
