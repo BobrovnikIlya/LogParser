@@ -183,6 +183,10 @@ public class LogFileParser {
             currentStatus.progress = (int) (COUNTING_WEIGHT * 100);
             currentStatus.status = "Подсчет строк завершен: " + String.format("%,d", totalLines) + " строк";
 
+            currentStatus.stageName = "🚀 Парсинг данных";
+            currentStatus.stageProgress = 0;
+            currentStatus.parsingStageStartTime = System.currentTimeMillis();
+
             // Проверка отмены после подсчета строк
             if (currentStatus.isCancelled) {
                 finishWithCancellation(currentStatus);
@@ -198,8 +202,6 @@ public class LogFileParser {
 
             // 5. Гибридная загрузка
             System.out.println("Начало гибридной загрузки с оптимизированным чтением...");
-            currentStatus.stageName = "🚀 Парсинг данных";
-            currentStatus.parsingStageStartTime = System.currentTimeMillis();
 
             // Создаем Piped потоки с таймаутом
             pos = new PipedOutputStream();
@@ -643,88 +645,99 @@ public class LogFileParser {
 
         long currentTime = System.currentTimeMillis();
 
-        // === ЭТАП ФИНАЛИЗАЦИИ ===
-        // ✅ ПРОВЕРКА ОТМЕНЫ
-        if (status.isCancelled) {
-            System.out.println("🚫 Финализация отменена");
-            throw new InterruptedException("Отменено пользователем");
-        }
-
-        status.stageStartTime = System.currentTimeMillis();
-        status.stageName = "🗃️ Финализация таблицы";
-        status.stageProgress = 0;
-
-        AtomicBoolean finalizationCompleted = new AtomicBoolean(false);
-        AtomicLong actualFinalizationTime = new AtomicLong(0);
-
-        Thread finalizationThread = new Thread(() -> {
-            try {
-                long finalizationStartTime = System.currentTimeMillis();
-                databaseManager.finalizeTable(conn, null, status);
-                long finalizationEndTime = System.currentTimeMillis();
-                actualFinalizationTime.set(finalizationEndTime - finalizationStartTime);
-                finalizationCompleted.set(true);
-                System.out.println("Финализация выполнена за " + (actualFinalizationTime.get() / 1000.0) + " сек");
-            } catch (InterruptedException e) {
-                System.out.println("🚫 Финализация прервана: " + e.getMessage());
-                finalizationCompleted.set(false);
-            } catch (Exception e) {
-                System.err.println("Ошибка при финализации: " + e.getMessage());
-                finalizationCompleted.set(true);
-            }
-        });
-
-        finalizationThread.start();
-
-        // Мониторинг финализации с проверкой отмены
-        long finalizationStartTime = System.currentTimeMillis();
-        while (finalizationThread.isAlive()) {
+        try (Connection finalizeConn = DriverManager.getConnection(
+                DatabaseConfig.DB_URL,
+                DatabaseConfig.DB_USERNAME,
+                DatabaseConfig.DB_PASSWORD)){
+            // === ЭТАП ФИНАЛИЗАЦИИ ===
             // ✅ ПРОВЕРКА ОТМЕНЫ
             if (status.isCancelled) {
-                System.out.println("🚫 Отмена во время финализации");
-                finalizationThread.interrupt();
-                status.estimatedTimeRemaining = status.estimatedIndexingTime + status.estimatedStatisticsTime;
+                System.out.println("🚫 Финализация отменена");
                 throw new InterruptedException("Отменено пользователем");
             }
 
-            long elapsedFinalizationTime = System.currentTimeMillis() - finalizationStartTime;
-            double stageProgress = Math.min(99.0, (elapsedFinalizationTime * 100.0) /
-                    Math.max(1, status.estimatedFinalizationTime));
+            status.stageStartTime = System.currentTimeMillis();
+            status.stageName = "🗃️ Финализация таблицы";
+            status.stageProgress = 0;
 
-            // ✅ ИСПРАВЛЕНИЕ: Обновляем общее оставшееся время
-            long remainingFinalization = (long) (status.estimatedFinalizationTime * (100 - stageProgress) / 100.0);
-            status.estimatedTimeRemaining = remainingFinalization +
-                    status.estimatedIndexingTime +
-                    status.estimatedStatisticsTime;
+            AtomicBoolean finalizationCompleted = new AtomicBoolean(false);
+            AtomicLong actualFinalizationTime = new AtomicLong(0);
 
-            double overallProgress = (countingWeight + parsingWeight) * 100 +
-                    (finalizationWeight * 100 * stageProgress / 100.0);
+            Thread finalizationThread = new Thread(() -> {
+                try {
+                    long finalizationStartTime = System.currentTimeMillis();
+                    databaseManager.finalizeTable(finalizeConn, null, status);
+                    long finalizationEndTime = System.currentTimeMillis();
+                    actualFinalizationTime.set(finalizationEndTime - finalizationStartTime);
+                    finalizationCompleted.set(true);
+                    System.out.println("Финализация выполнена за " + (actualFinalizationTime.get() / 1000.0) + " сек");
+                } catch (InterruptedException e) {
+                    System.out.println("🚫 Финализация прервана: " + e.getMessage());
+                    finalizationCompleted.set(false);
+                } catch (Exception e) {
+                    System.err.println("Ошибка при финализации: " + e.getMessage());
+                    finalizationCompleted.set(true);
+                }
+            });
 
-            status.stageProgress = (int) stageProgress;
-            status.progress = (int) overallProgress;
-            status.status = "Финализация таблицы...";
+            finalizationThread.start();
 
-            Thread.sleep(500);
+            // Мониторинг финализации с проверкой отмены
+            long finalizationStartTime = System.currentTimeMillis();
+            while (finalizationThread.isAlive()) {
+                // ✅ ПРОВЕРКА ОТМЕНЫ
+                if (status.isCancelled) {
+                    System.out.println("🚫 Отмена во время финализации");
+                    finalizationThread.interrupt();
+                    status.estimatedTimeRemaining = status.estimatedIndexingTime + status.estimatedStatisticsTime;
+                    throw new InterruptedException("Отменено пользователем");
+                }
+
+                long elapsedFinalizationTime = System.currentTimeMillis() - finalizationStartTime;
+                double stageProgress = Math.min(99.0, (elapsedFinalizationTime * 100.0) /
+                        Math.max(1, status.estimatedFinalizationTime));
+
+                // ✅ ИСПРАВЛЕНИЕ: Обновляем общее оставшееся время
+                long remainingFinalization = (long) (status.estimatedFinalizationTime * (100 - stageProgress) / 100.0);
+                status.estimatedTimeRemaining = remainingFinalization +
+                        status.estimatedIndexingTime +
+                        status.estimatedStatisticsTime;
+
+                double overallProgress = (countingWeight + parsingWeight) * 100 +
+                        (finalizationWeight * 100 * stageProgress / 100.0);
+
+                status.stageProgress = (int) stageProgress;
+                status.progress = (int) overallProgress;
+                status.status = "Финализация таблицы...";
+
+                Thread.sleep(500);
+            }
+
+            // ✅ ПРОВЕРКА ОТМЕНЫ
+            if (status.isCancelled) {
+                System.out.println("🚫 Отмена после финализации");
+                throw new InterruptedException("Отменено пользователем");
+            }
+
+            // Завершение финализации
+            status.stageProgress = 100;
+            status.progress = (int) ((countingWeight + parsingWeight + finalizationWeight) * 100);
+            status.status = "Финализация таблицы завершена";
+            status.actualFinalizationTime = actualFinalizationTime.get();
+            status.finalizationCompleted = true;
         }
+            try { if (conn != null && !conn.isClosed()) conn.close(); } catch (Exception ignored) {}
 
-        // ✅ ПРОВЕРКА ОТМЕНЫ
-        if (status.isCancelled) {
-            System.out.println("🚫 Отмена после финализации");
-            throw new InterruptedException("Отменено пользователем");
-        }
-
-        // Завершение финализации
-        status.stageProgress = 100;
-        status.progress = (int)((countingWeight + parsingWeight + finalizationWeight) * 100);
-        status.status = "Финализация таблицы завершена";
-        status.actualFinalizationTime = actualFinalizationTime.get();
-        status.finalizationCompleted = true;
-
-        try (Connection newConn = conn) {
-            databaseManager.populateStatusesAndActions(newConn);
-        } catch (Exception e) {
-            System.err.println("Ошибка заполнения статусов/действий: " + e.getMessage());
-        }
+// Создаём НОВОЕ соединение
+            try (Connection populateConn = DriverManager.getConnection(
+                    DatabaseConfig.DB_URL,
+                    DatabaseConfig.DB_USERNAME,
+                    DatabaseConfig.DB_PASSWORD)) {
+                databaseManager.populateStatusesAndActions(populateConn);
+                System.out.println("✅ Статусы и действия успешно заполнены");
+            } catch (Exception e) {
+                System.err.println("Ошибка заполнения статусов/действий: " + e.getMessage());
+            }
 
         try {
             filterCacheService.invalidateCacheAfterDataChange();
@@ -739,219 +752,230 @@ public class LogFileParser {
         Thread.sleep(300);
         currentTime = System.currentTimeMillis();
 
-        // === ЭТАП ИНДЕКСАЦИИ ===
-        // ✅ ПРОВЕРКА ОТМЕНЫ
-        if (status.isCancelled) {
-            System.out.println("🚫 Индексация отменена");
-            throw new InterruptedException("Отменено пользователем");
-        }
-
-        status.stageStartTime = System.currentTimeMillis();
-        status.stageName = "📈 Создание индексов";
-        status.stageProgress = 0;
-
-        AtomicBoolean indexingCompleted = new AtomicBoolean(false);
-        final int[] currentIndexProgress = {0};
-        final int totalIndexWeight = 11;
-        AtomicInteger currentIndexWeight = new AtomicInteger(0);
-
-        Thread indexingThread = new Thread(() -> {
-            try {
-                databaseManager.createIndexesWithProgressTracking(conn, (weightProgress) -> {
-                    currentIndexWeight.set(weightProgress);
-                }, status);
-                indexingCompleted.set(true);
-            } catch (InterruptedException e) {
-                System.out.println("🚫 Индексация прервана: " + e.getMessage());
-                indexingCompleted.set(false);
-            } catch (Exception e) {
-                System.err.println("Ошибка при создании индексов: " + e.getMessage());
-                indexingCompleted.set(true);
-            }
-        });
-
-        indexingThread.start();
-
-        // Мониторинг индексации с проверкой отмены
-        long indexingStartTime = System.currentTimeMillis();
-        while (indexingThread.isAlive()) {
+        try (Connection indexConn  = DriverManager.getConnection(
+                DatabaseConfig.DB_URL,
+                DatabaseConfig.DB_USERNAME,
+                DatabaseConfig.DB_PASSWORD)) {
+            // === ЭТАП ИНДЕКСАЦИИ ===
             // ✅ ПРОВЕРКА ОТМЕНЫ
             if (status.isCancelled) {
-                System.out.println("🚫 Отмена во время индексации");
-                indexingThread.interrupt();
-
-                // Отменяем операции создания индексов в БД
-                try (Statement cancelStmt = conn.createStatement()) {
-                    cancelStmt.execute("SELECT pg_cancel_backend(pg_backend_pid())");
-                } catch (SQLException ignored) {}
-
-                status.estimatedTimeRemaining = status.estimatedStatisticsTime;
+                System.out.println("🚫 Индексация отменена");
                 throw new InterruptedException("Отменено пользователем");
             }
 
-            long elapsedIndexingTime = System.currentTimeMillis() - indexingStartTime;
-
-            double timeBasedProgress = Math.min(99, (elapsedIndexingTime * 100.0) /
-                    Math.max(1, status.estimatedIndexingTime));
-            double indexBasedProgress = Math.min(99, (currentIndexWeight.get() * 100.0) / totalIndexWeight);
-            double stageProgress = Math.min(99, (timeBasedProgress * 0.5) + (indexBasedProgress * 0.5));
-
-            // ✅ ИСПРАВЛЕНИЕ: Обновляем общее оставшееся время
-            long remainingIndexing = (long) (status.estimatedIndexingTime * (100 - stageProgress) / 100.0);
-            status.estimatedTimeRemaining = remainingIndexing + status.estimatedStatisticsTime;
-
-            double overallProgress = (countingWeight + parsingWeight + finalizationWeight) * 100 +
-                    (indexingWeight * 100 * stageProgress / 100.0);
-
-            status.stageProgress = (int)stageProgress;
-            status.progress = (int)overallProgress;
-            status.status = String.format("Создание индексов... (%d%%)", (int)stageProgress);
-
-            Thread.sleep(1000);
-        }
-
-        // ✅ ПРОВЕРКА ОТМЕНЫ
-        if (status.isCancelled) {
-            System.out.println("🚫 Отмена после индексации");
-            throw new InterruptedException("Отменено пользователем");
-        }
-
-        // Завершение индексации
-        status.stageProgress = 100;
-        status.progress = (int)((countingWeight + parsingWeight + finalizationWeight + indexingWeight) * 100);
-        status.status = "Создание индексов завершено";
-        status.actualIndexingTime = System.currentTimeMillis() - indexingStartTime;
-        status.indexingCompleted = true;
-
-        // ✅ ИСПРАВЛЕНИЕ: Обновляем общее время после индексации
-        status.estimatedTimeRemaining = status.estimatedStatisticsTime;
-
-        Thread.sleep(500);
-        currentTime = System.currentTimeMillis();
-
-        // === ЭТАП СТАТИСТИКИ ===
-        // ✅ ПРОВЕРКА ОТМЕНЫ
-        if (status.isCancelled) {
-            System.out.println("🚫 Статистика отменена");
-            throw new InterruptedException("Отменено пользователем");
-        }
-
-        status.stageStartTime = System.currentTimeMillis();
-        status.stageName = "📊 Обновление статистики";
-        status.stageProgress = 0;
-
-        AtomicBoolean statsCompleted = new AtomicBoolean(false);
-
-        Thread statisticsThread = new Thread(() -> {
-            try {
-                long statsStartTime = System.currentTimeMillis();
-
-                // ✅ ПРОВЕРКА ОТМЕНЫ внутри потока
-                if (status.isCancelled) {
-                    System.out.println("🚫 Статистика отменена");
-                    return;
-                }
-
-                databaseManager.updateStatistics(conn);
-
-                // ✅ ПРОВЕРКА ОТМЕНЫ
-                if (status.isCancelled) {
-                    System.out.println("🚫 Статистика отменена после updateStatistics");
-                    return;
-                }
-
-                System.out.println("📊 Вычисление и сохранение агрегированной статистики...");
-                aggregatedStatsService.calculateAndSaveDefaultStats();
-
-                // ✅ ПРОВЕРКА ОТМЕНЫ
-                if (status.isCancelled) {
-                    System.out.println("🚫 Статистика отменена после calculateAndSaveDefaultStats");
-                    return;
-                }
-
-                System.out.println("🔄 Обновление прерассчитанных топов...");
-                precalculatedTopService.updatePrecalculatedTops();
-
-                long statsEndTime = System.currentTimeMillis();
-                System.out.println("Статистика обновлена за " + ((statsEndTime - statsStartTime) / 1000.0) + " сек");
-                statsCompleted.set(true);
-            } catch (Exception e) {
-                if (!status.isCancelled) {
-                    System.err.println("⚠ Ошибка обновления статистики: " + e.getMessage());
-                }
-                statsCompleted.set(false);
-            }
-        });
-
-        statisticsThread.start();
-
-        // Мониторинг статистики с проверкой отмены
-        long statsStartTime = System.currentTimeMillis();
-        while (statisticsThread.isAlive()) {
-            // ✅ ПРОВЕРКА ОТМЕНЫ
-            if (status.isCancelled) {
-                System.out.println("🚫 Отмена во время обновления статистики");
-                statisticsThread.interrupt();
-                status.estimatedTimeRemaining = 0;
-                throw new InterruptedException("Отменено пользователем");
-            }
-
-            long elapsedStatsTime = System.currentTimeMillis() - statsStartTime;
-            double stageProgress = Math.min(99, (elapsedStatsTime * 100.0) /
-                    Math.max(1, status.estimatedStatisticsTime));
-
-            // ✅ ИСПРАВЛЕНИЕ: Обновляем общее оставшееся время
-            long remainingStatistics = (long) (status.estimatedStatisticsTime * (100 - stageProgress) / 100.0);
-            status.estimatedTimeRemaining = remainingStatistics;
-
-            double overallProgress = (countingWeight + parsingWeight + finalizationWeight + indexingWeight) * 100 +
-                    (statisticsWeight * 100 * stageProgress / 100.0);
-
-            status.stageProgress = (int)stageProgress;
-            status.progress = (int)overallProgress;
-            status.status = String.format("Обновление статистики... (%d%%)", (int)stageProgress);
-
-            Thread.sleep(1000);
-        }
-
-        // ✅ ПРОВЕРКА ОТМЕНЫ
-        if (status.isCancelled) {
-            System.out.println("🚫 Отмена после статистики");
-            throw new InterruptedException("Отменено пользователем");
-        }
-
-        // Завершение статистики
-        status.actualStatisticsTime = System.currentTimeMillis() - statsStartTime;
-        status.statisticsCompleted = true;
-        status.estimatedTimeRemaining = 0; // ✅ Все этапы завершены
-
-        // Финальный статус
-        if (!status.isCancelled && statsCompleted.get()) {
-            status.stageProgress = 100;
-            status.progress = 100;
-            status.isParsing = false;
-            status.stageName = "✅ Завершено";
-            status.status = String.format(
-                    "Парсинг завершен за %.1f мин\n" +
-                            "Обработано: %,d строк\n" +
-                            "Добавлено: %,d записей\n" +
-                            "Средняя скорость: %,.0f записей/сек",
-                    (System.currentTimeMillis() - startTime) / 60000.0,
-                    totalLines, totalRecords,
-                    totalRecords / ((System.currentTimeMillis() - startTime) / 1000.0)
-            );
-        } else if (status.isCancelled) {
+            status.stageStartTime = System.currentTimeMillis();
+            status.stageName = "📈 Создание индексов";
             status.stageProgress = 0;
-            status.progress = 0;
-            status.isParsing = false;
-            status.stageName = "🚫 Отменено";
-            status.status = "Парсинг отменен пользователем";
-        } else {
+
+            AtomicBoolean indexingCompleted = new AtomicBoolean(false);
+            final int[] currentIndexProgress = {0};
+            final int totalIndexWeight = 11;
+            AtomicInteger currentIndexWeight = new AtomicInteger(0);
+
+            Thread indexingThread = new Thread(() -> {
+                try {
+                    databaseManager.createIndexesWithProgressTracking(indexConn, (weightProgress) -> {
+                        currentIndexWeight.set(weightProgress);
+                    }, status);
+                    indexingCompleted.set(true);
+                } catch (InterruptedException e) {
+                    System.out.println("🚫 Индексация прервана: " + e.getMessage());
+                    indexingCompleted.set(false);
+                } catch (Exception e) {
+                    System.err.println("Ошибка при создании индексов: " + e.getMessage());
+                    indexingCompleted.set(true);
+                }
+            });
+
+            indexingThread.start();
+
+            // Мониторинг индексации с проверкой отмены
+            long indexingStartTime = System.currentTimeMillis();
+            while (indexingThread.isAlive()) {
+                // ✅ ПРОВЕРКА ОТМЕНЫ
+                if (status.isCancelled) {
+                    System.out.println("🚫 Отмена во время индексации");
+                    indexingThread.interrupt();
+
+                    // Отменяем операции создания индексов в БД
+                    try (Statement cancelStmt = conn.createStatement()) {
+                        cancelStmt.execute("SELECT pg_cancel_backend(pg_backend_pid())");
+                    } catch (SQLException ignored) {
+                    }
+
+                    status.estimatedTimeRemaining = status.estimatedStatisticsTime;
+                    throw new InterruptedException("Отменено пользователем");
+                }
+
+                long elapsedIndexingTime = System.currentTimeMillis() - indexingStartTime;
+
+                double timeBasedProgress = Math.min(99, (elapsedIndexingTime * 100.0) /
+                        Math.max(1, status.estimatedIndexingTime));
+                double indexBasedProgress = Math.min(99, (currentIndexWeight.get() * 100.0) / totalIndexWeight);
+                double stageProgress = Math.min(99, (timeBasedProgress * 0.5) + (indexBasedProgress * 0.5));
+
+                // ✅ ИСПРАВЛЕНИЕ: Обновляем общее оставшееся время
+                long remainingIndexing = (long) (status.estimatedIndexingTime * (100 - stageProgress) / 100.0);
+                status.estimatedTimeRemaining = remainingIndexing + status.estimatedStatisticsTime;
+
+                double overallProgress = (countingWeight + parsingWeight + finalizationWeight) * 100 +
+                        (indexingWeight * 100 * stageProgress / 100.0);
+
+                status.stageProgress = (int) stageProgress;
+                status.progress = (int) overallProgress;
+                status.status = String.format("Создание индексов... (%d%%)", (int) stageProgress);
+
+                Thread.sleep(1000);
+            }
+
+            // ✅ ПРОВЕРКА ОТМЕНЫ
+            if (status.isCancelled) {
+                System.out.println("🚫 Отмена после индексации");
+                throw new InterruptedException("Отменено пользователем");
+            }
+
+            // Завершение индексации
             status.stageProgress = 100;
-            status.progress = 100;
-            status.isParsing = false;
-            status.stageName = "⚠ Завершено с ошибками";
-            status.status = "Парсинг завершен с ошибками при обновлении статистики";
+            status.progress = (int) ((countingWeight + parsingWeight + finalizationWeight + indexingWeight) * 100);
+            status.status = "Создание индексов завершено";
+            status.actualIndexingTime = System.currentTimeMillis() - indexingStartTime;
+            status.indexingCompleted = true;
+
+            // ✅ ИСПРАВЛЕНИЕ: Обновляем общее время после индексации
+            status.estimatedTimeRemaining = status.estimatedStatisticsTime;
+
+            Thread.sleep(500);
+            currentTime = System.currentTimeMillis();
+        }
+
+        try (Connection statsConn   = DriverManager.getConnection(
+                DatabaseConfig.DB_URL,
+                DatabaseConfig.DB_USERNAME,
+                DatabaseConfig.DB_PASSWORD)) {
+            // === ЭТАП СТАТИСТИКИ ===
+            // ✅ ПРОВЕРКА ОТМЕНЫ
+            if (status.isCancelled) {
+                System.out.println("🚫 Статистика отменена");
+                throw new InterruptedException("Отменено пользователем");
+            }
+
+            status.stageStartTime = System.currentTimeMillis();
+            status.stageName = "📊 Обновление статистики";
+            status.stageProgress = 0;
+
+            AtomicBoolean statsCompleted = new AtomicBoolean(false);
+
+            Thread statisticsThread = new Thread(() -> {
+                try {
+                    long statsStartTime = System.currentTimeMillis();
+
+                    // ✅ ПРОВЕРКА ОТМЕНЫ внутри потока
+                    if (status.isCancelled) {
+                        System.out.println("🚫 Статистика отменена");
+                        return;
+                    }
+
+                    databaseManager.updateStatistics(statsConn);
+
+                    // ✅ ПРОВЕРКА ОТМЕНЫ
+                    if (status.isCancelled) {
+                        System.out.println("🚫 Статистика отменена после updateStatistics");
+                        return;
+                    }
+
+                    System.out.println("📊 Вычисление и сохранение агрегированной статистики...");
+                    aggregatedStatsService.calculateAndSaveDefaultStats();
+
+                    // ✅ ПРОВЕРКА ОТМЕНЫ
+                    if (status.isCancelled) {
+                        System.out.println("🚫 Статистика отменена после calculateAndSaveDefaultStats");
+                        return;
+                    }
+
+                    System.out.println("🔄 Обновление прерассчитанных топов...");
+                    precalculatedTopService.updatePrecalculatedTops();
+
+                    long statsEndTime = System.currentTimeMillis();
+                    System.out.println("Статистика обновлена за " + ((statsEndTime - statsStartTime) / 1000.0) + " сек");
+                    statsCompleted.set(true);
+                } catch (Exception e) {
+                    if (!status.isCancelled) {
+                        System.err.println("⚠ Ошибка обновления статистики: " + e.getMessage());
+                    }
+                    statsCompleted.set(false);
+                }
+            });
+
+            statisticsThread.start();
+
+            // Мониторинг статистики с проверкой отмены
+            long statsStartTime = System.currentTimeMillis();
+            while (statisticsThread.isAlive()) {
+                // ✅ ПРОВЕРКА ОТМЕНЫ
+                if (status.isCancelled) {
+                    System.out.println("🚫 Отмена во время обновления статистики");
+                    statisticsThread.interrupt();
+                    status.estimatedTimeRemaining = 0;
+                    throw new InterruptedException("Отменено пользователем");
+                }
+
+                long elapsedStatsTime = System.currentTimeMillis() - statsStartTime;
+                double stageProgress = Math.min(99, (elapsedStatsTime * 100.0) /
+                        Math.max(1, status.estimatedStatisticsTime));
+
+                // ✅ ИСПРАВЛЕНИЕ: Обновляем общее оставшееся время
+                long remainingStatistics = (long) (status.estimatedStatisticsTime * (100 - stageProgress) / 100.0);
+                status.estimatedTimeRemaining = remainingStatistics;
+
+                double overallProgress = (countingWeight + parsingWeight + finalizationWeight + indexingWeight) * 100 +
+                        (statisticsWeight * 100 * stageProgress / 100.0);
+
+                status.stageProgress = (int) stageProgress;
+                status.progress = (int) overallProgress;
+                status.status = String.format("Обновление статистики... (%d%%)", (int) stageProgress);
+
+                Thread.sleep(1000);
+            }
+
+            // ✅ ПРОВЕРКА ОТМЕНЫ
+            if (status.isCancelled) {
+                System.out.println("🚫 Отмена после статистики");
+                throw new InterruptedException("Отменено пользователем");
+            }
+
+            // Завершение статистики
+            status.actualStatisticsTime = System.currentTimeMillis() - statsStartTime;
+            status.statisticsCompleted = true;
+            status.estimatedTimeRemaining = 0; // ✅ Все этапы завершены
+
+            // Финальный статус
+            if (!status.isCancelled && statsCompleted.get()) {
+                status.stageProgress = 100;
+                status.progress = 100;
+                status.isParsing = false;
+                status.stageName = "✅ Завершено";
+                status.status = String.format(
+                        "Парсинг завершен за %.1f мин\n" +
+                                "Обработано: %,d строк\n" +
+                                "Добавлено: %,d записей\n" +
+                                "Средняя скорость: %,.0f записей/сек",
+                        (System.currentTimeMillis() - startTime) / 60000.0,
+                        totalLines, totalRecords,
+                        totalRecords / ((System.currentTimeMillis() - startTime) / 1000.0)
+                );
+            } else if (status.isCancelled) {
+                status.stageProgress = 0;
+                status.progress = 0;
+                status.isParsing = false;
+                status.stageName = "🚫 Отменено";
+                status.status = "Парсинг отменен пользователем";
+            } else {
+                status.stageProgress = 100;
+                status.progress = 100;
+                status.isParsing = false;
+                status.stageName = "⚠ Завершено с ошибками";
+                status.status = "Парсинг завершен с ошибками при обновлении статистики";
+            }
         }
     }
 
