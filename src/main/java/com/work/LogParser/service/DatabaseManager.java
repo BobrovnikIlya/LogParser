@@ -1,6 +1,7 @@
 package com.work.LogParser.service;
 
 import com.work.LogParser.config.DatabaseConfig;
+import com.work.LogParser.model.ParsingStatus;
 import org.springframework.stereotype.Service;
 
 import java.sql.*;
@@ -90,30 +91,35 @@ public class DatabaseManager {
         }
     }
 
-    public void createIndexesWithProgressTracking(Connection conn, Consumer<Integer> progressCallback) throws SQLException {
+    public void createIndexesWithProgressTracking(Connection conn, Consumer<Integer> progressCallback,
+                                                  ParsingStatus status) throws SQLException, InterruptedException {
+
         System.out.println("Создание индексов с отслеживанием прогресса...");
 
-        // Массив индексов для создания (с оценкой сложности)
         IndexTask[] indexTasks = {
-                // Простые индексы (быстрые) - вес 1
                 new IndexTask("CREATE INDEX IF NOT EXISTS idx_logs_time ON logs(time)", 1, false),
                 new IndexTask("CREATE INDEX IF NOT EXISTS idx_logs_username ON logs(username)", 1, false),
-
-                // Конкурентные индексы (средние) - вес 2
                 new IndexTask("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_active_users ON logs(username) WHERE username != '-'", 2, true),
                 new IndexTask("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_error_status ON logs(status_code, time) WHERE status_code >= 400", 2, true),
                 new IndexTask("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_ip_filter ON logs(ip) WHERE ip IS NOT NULL", 2, true),
-
-                // Сложный конкурентный индекс (самый долгий) - вес 3
                 new IndexTask("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_large_files ON logs(response_size_bytes, url) WHERE response_size_bytes > 1048576", 3, true)
         };
 
         int totalWeight = Arrays.stream(indexTasks).mapToInt(task -> task.weight).sum();
         final int[] currentWeight = {0};
-        final int[] createdCount = {0};
 
-        // Создаем индексы в основном соединении
+        // Проверка отмены
+        if (status != null && status.isCancelled) {
+            System.out.println("Создание индексов отменено");
+            return;
+        }
+
+        // Создаем простые индексы
         for (IndexTask task : indexTasks) {
+            if (status != null && status.isCancelled) {
+                throw new InterruptedException("Отменено пользователем");
+            }
+
             if (!task.concurrent) {
                 try (Statement st = conn.createStatement()) {
                     System.out.println("Создание индекса: " + task.sql);
@@ -124,22 +130,21 @@ public class DatabaseManager {
                     long endTime = System.currentTimeMillis();
                     System.out.println("Индекс создан за " + ((endTime - startTime) / 1000.0) + " сек");
 
-                    createdCount[0]++;
                     currentWeight[0] += task.weight;
-
-                    // Рассчитываем прогресс на основе веса
                     int progress = (currentWeight[0] * 100) / totalWeight;
                     if (progressCallback != null) {
                         progressCallback.accept(progress);
                     }
-                } catch (SQLException e) {
-                    System.err.println("Ошибка создания индекса: " + e.getMessage());
-                    throw e;
                 }
             }
         }
 
-        // Создаем конкурентные индексы в фоне
+        // Проверка отмены
+        if (status != null && status.isCancelled) {
+            throw new InterruptedException("Отменено пользователем");
+        }
+
+        // Создаем конкурентные индексы в фоне с поддержкой отмены
         Thread backgroundIndexing = new Thread(() -> {
             try (Connection bgConn = DriverManager.getConnection(
                     DatabaseConfig.DB_URL,
@@ -149,8 +154,17 @@ public class DatabaseManager {
                 bgConn.setAutoCommit(true);
 
                 for (IndexTask task : indexTasks) {
+                    // Проверка отмены
+                    if (status != null && status.isCancelled) {
+                        System.out.println("Конкурентная индексация отменена");
+                        return;
+                    }
+
                     if (task.concurrent) {
                         try (Statement bgStmt = bgConn.createStatement()) {
+                            // Устанавливаем таймаут на создание индекса
+                            bgStmt.setQueryTimeout(300); // 5 минут
+
                             System.out.println("Создание конкурентного индекса: " + task.sql);
                             long startTime = System.currentTimeMillis();
 
@@ -159,35 +173,48 @@ public class DatabaseManager {
                             long endTime = System.currentTimeMillis();
                             System.out.println("Конкурентный индекс создан за " + ((endTime - startTime) / 1000.0) + " сек");
 
-                            createdCount[0]++;
                             currentWeight[0] += task.weight;
-
-                            // Рассчитываем прогресс на основе веса
                             int progress = (currentWeight[0] * 100) / totalWeight;
                             if (progressCallback != null) {
                                 progressCallback.accept(progress);
                             }
-                        } catch (Exception e) {
+                        } catch (SQLException e) {
+                            if (status != null && status.isCancelled) {
+                                System.out.println("Конкурентная индексация прервана");
+                                return;
+                            }
                             System.err.println("⚠ Ошибка создания конкурентного индекса: " + e.getMessage());
                         }
                     }
                 }
-
             } catch (Exception e) {
-                System.err.println("❌ Ошибка в фоновом создании индексов: " + e.getMessage());
+                if (status != null && !status.isCancelled) {
+                    System.err.println("❌ Ошибка в фоновом создании индексов: " + e.getMessage());
+                }
             }
         });
 
         backgroundIndexing.start();
 
-        // Ждем завершения фонового создания индексов
+        // Ожидаем завершения с проверкой отмены
         try {
-            backgroundIndexing.join();
+            while (backgroundIndexing.isAlive()) {
+                if (status != null && status.isCancelled) {
+                    backgroundIndexing.interrupt();
+                    // Отменяем операции в БД
+                    try (Statement cancelStmt = conn.createStatement()) {
+                        cancelStmt.execute("SELECT pg_cancel_backend(pg_backend_pid())");
+                    }
+                    throw new InterruptedException("Отменено пользователем");
+                }
+                backgroundIndexing.join(1000);
+            }
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            backgroundIndexing.interrupt();
+            throw e;
         }
 
-        System.out.println("Все " + createdCount[0] + " индексов созданы");
+        System.out.println("Создание индексов завершено");
     }
 
     // Вспомогательный класс для задания на создание индекса
@@ -244,8 +271,16 @@ public class DatabaseManager {
         }
     }
 
-    public void finalizeTable(Connection conn, Consumer<Integer> checkpointCallback) throws SQLException {
+    public void finalizeTable(Connection conn, Consumer<Integer> checkpointCallback, ParsingStatus status)
+            throws SQLException, InterruptedException {
+
         System.out.println("Финальная обработка таблицы...");
+
+        // Проверка отмены
+        if (status != null && status.isCancelled) {
+            System.out.println("Финализация отменена");
+            return;
+        }
 
         boolean originalAutoCommit = conn.getAutoCommit();
 
@@ -254,20 +289,29 @@ public class DatabaseManager {
                 conn.setAutoCommit(false);
             }
 
+            // Проверка отмены перед каждой операцией
+            if (status != null && status.isCancelled) throw new InterruptedException("Отменено");
+
             // 1. Делаем временную таблицу постоянной
             st.execute("ALTER TABLE logs_unlogged SET LOGGED");
+            if (status != null && status.isCancelled) throw new InterruptedException("Отменено");
 
             // 2. Создаем backup старой таблицы
             st.execute("DROP TABLE IF EXISTS logs_old");
+            if (status != null && status.isCancelled) throw new InterruptedException("Отменено");
 
             // 3. Переименовываем старую таблицу
             st.execute("ALTER TABLE IF EXISTS logs RENAME TO logs_old");
+            if (status != null && status.isCancelled) throw new InterruptedException("Отменено");
 
             // 4. Переименовываем новую таблицу
             st.execute("ALTER TABLE logs_unlogged RENAME TO logs");
+            if (status != null && status.isCancelled) throw new InterruptedException("Отменено");
 
             // 5. Пополняем статусы и действия
-            populateStatusesAndActions(conn);
+            if (status == null || !status.isCancelled) {
+                populateStatusesAndActions(conn);
+            }
 
             if (originalAutoCommit) {
                 conn.commit();
@@ -276,6 +320,12 @@ public class DatabaseManager {
 
             System.out.println("Таблица logs заменена атомарно");
 
+        } catch (InterruptedException e) {
+            if (!originalAutoCommit) {
+                conn.rollback();
+            }
+            System.out.println("Финализация прервана: " + e.getMessage());
+            throw e;
         } catch (Exception e) {
             if (!originalAutoCommit) {
                 conn.rollback();

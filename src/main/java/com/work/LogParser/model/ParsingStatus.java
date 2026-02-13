@@ -47,4 +47,33 @@ public class ParsingStatus {
     // Для отслеживания прогресса статистики
     public String currentStatisticTask = "";
     public int statisticsSubProgress = 0;
+
+    private volatile boolean cleanupRequested = false;
+    private String cancellationReason = null;
+    private long cancellationTime = 0;
+
+    // Геттеры и сеттеры
+    public boolean isCleanupRequested() {
+        return cleanupRequested;
+    }
+
+    public void setCleanupRequested(boolean cleanupRequested) {
+        this.cleanupRequested = cleanupRequested;
+    }
+
+    public String getCancellationReason() {
+        return cancellationReason;
+    }
+
+    public void setCancellationReason(String cancellationReason) {
+        this.cancellationReason = cancellationReason;
+    }
+
+    public long getCancellationTime() {
+        return cancellationTime;
+    }
+
+    public void setCancellationTime(long cancellationTime) {
+        this.cancellationTime = cancellationTime;
+    }
 }

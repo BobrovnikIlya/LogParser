@@ -1,11 +1,13 @@
 package com.work.LogParser.service;
 
+import com.work.LogParser.config.DatabaseConfig;
 import com.work.LogParser.model.ParsingStatus;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import com.work.LogParser.repository.LogDataRepository;
 
+import java.sql.*;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -91,61 +93,70 @@ public class LogParsingService {
             status.put("filePath", currentStatus.filePath != null ? currentStatus.filePath : "");
             status.put("isCancelled", currentStatus.isCancelled);
 
-            // ===== РАСЧЕТ ОБЩЕГО ОСТАВШЕГОСЯ ВРЕМЕНИ =====
-            if (currentStatus.isParsing && currentStatus.startTime > 0) {
-                // Вызываем исправленную функцию расчета
-                long totalRemaining = calculateTotalRemainingTime(currentStatus);
-                currentStatus.estimatedTimeRemaining = totalRemaining;
-                status.put("estimatedTimeRemaining", totalRemaining);
-
-                // Добавляем оценки времени этапов
-                status.put("estimatedFinalizationTime", currentStatus.estimatedFinalizationTime);
-                status.put("estimatedIndexingTime", currentStatus.estimatedIndexingTime);
-                status.put("estimatedStatisticsTime", currentStatus.estimatedStatisticsTime);
-
-                // Прошедшее время
-                long elapsed = System.currentTimeMillis() - currentStatus.startTime;
-                status.put("elapsed", elapsed);
-                status.put("elapsedFormatted", formatRemainingTime(elapsed));
-            } else {
+            if (currentStatus.isCancelled) {
                 status.put("estimatedTimeRemaining", 0);
-                status.put("estimatedFinalizationTime", 0);
-                status.put("estimatedIndexingTime", 0);
-                status.put("estimatedStatisticsTime", 0);
+                status.put("remaining", "отменено");
+                status.put("remainingSeconds", 0);
                 status.put("elapsed", 0);
                 status.put("elapsedFormatted", "0 сек");
-            }
-
-            // ===== ОСТАВШЕЕСЯ ВРЕМЯ ТЕКУЩЕГО ЭТАПА =====
-            if (currentStatus.isParsing) {
-                Map<String, Object> stageStatus = calculateCurrentStageRemaining(currentStatus);
-                status.put("remainingSeconds", stageStatus.get("remainingSeconds"));
-                status.put("remaining", stageStatus.get("remaining"));
             } else {
-                status.put("remainingSeconds", -1);
-                status.put("remaining", "завершено");
+                // ===== РАСЧЕТ ОБЩЕГО ОСТАВШЕГОСЯ ВРЕМЕНИ =====
+                if (currentStatus.isParsing && currentStatus.startTime > 0) {
+                    // Вызываем исправленную функцию расчета
+                    long totalRemaining = calculateTotalRemainingTime(currentStatus);
+                    currentStatus.estimatedTimeRemaining = totalRemaining;
+                    status.put("estimatedTimeRemaining", totalRemaining);
+
+                    // Добавляем оценки времени этапов
+                    status.put("estimatedFinalizationTime", currentStatus.estimatedFinalizationTime);
+                    status.put("estimatedIndexingTime", currentStatus.estimatedIndexingTime);
+                    status.put("estimatedStatisticsTime", currentStatus.estimatedStatisticsTime);
+
+                    // Прошедшее время
+                    long elapsed = System.currentTimeMillis() - currentStatus.startTime;
+                    status.put("elapsed", elapsed);
+                    status.put("elapsedFormatted", formatRemainingTime(elapsed));
+                } else {
+                    status.put("estimatedTimeRemaining", 0);
+                    status.put("estimatedFinalizationTime", 0);
+                    status.put("estimatedIndexingTime", 0);
+                    status.put("estimatedStatisticsTime", 0);
+                    status.put("elapsed", 0);
+                    status.put("elapsedFormatted", "0 сек");
+                }
+
+                // ===== ОСТАВШЕЕСЯ ВРЕМЯ ТЕКУЩЕГО ЭТАПА =====
+                if (currentStatus.isParsing) {
+                    Map<String, Object> stageStatus = calculateCurrentStageRemaining(currentStatus);
+                    status.put("remainingSeconds", stageStatus.get("remainingSeconds"));
+                    status.put("remaining", stageStatus.get("remaining"));
+                } else {
+                    status.put("remainingSeconds", -1);
+                    status.put("remaining", "завершено");
+                }
+
+                // ===== ФАКТИЧЕСКИЕ ВРЕМЕНА ЭТАПОВ =====
+                status.put("actualParsingTime", currentStatus.actualParsingTime);
+                status.put("actualFinalizationTime", currentStatus.actualFinalizationTime);
+                status.put("actualIndexingTime", currentStatus.actualIndexingTime);
+                status.put("actualStatisticsTime", currentStatus.actualStatisticsTime);
+
+                // ===== ФЛАГИ ЗАВЕРШЕНИЯ =====
+                status.put("parsingCompleted", currentStatus.parsingCompleted);
+                status.put("finalizationCompleted", currentStatus.finalizationCompleted);
+                status.put("indexingCompleted", currentStatus.indexingCompleted);
+                status.put("statisticsCompleted", currentStatus.statisticsCompleted);
+
+                // ===== ИНФОРМАЦИЯ О СКОРОСТИ =====
+                status.put("parsingSpeed", currentStatus.parsingSpeed);
             }
-
-            // ===== ФАКТИЧЕСКИЕ ВРЕМЕНА ЭТАПОВ =====
-            status.put("actualParsingTime", currentStatus.actualParsingTime);
-            status.put("actualFinalizationTime", currentStatus.actualFinalizationTime);
-            status.put("actualIndexingTime", currentStatus.actualIndexingTime);
-            status.put("actualStatisticsTime", currentStatus.actualStatisticsTime);
-
-            // ===== ФЛАГИ ЗАВЕРШЕНИЯ =====
-            status.put("parsingCompleted", currentStatus.parsingCompleted);
-            status.put("finalizationCompleted", currentStatus.finalizationCompleted);
-            status.put("indexingCompleted", currentStatus.indexingCompleted);
-            status.put("statisticsCompleted", currentStatus.statisticsCompleted);
-
-            // ===== ИНФОРМАЦИЯ О СКОРОСТИ =====
-            status.put("parsingSpeed", currentStatus.parsingSpeed);
 
         } catch (Exception e) {
             // При любой ошибке возвращаем безопасный статус
             status.put("success", false);
             status.put("error", e.getMessage());
             status.put("isParsing", false);
+            status.put("isCancelled", currentStatus.isCancelled);
             status.put("estimatedTimeRemaining", 0);
         }
 
@@ -789,18 +800,67 @@ public class LogParsingService {
 
     public boolean cancelParsing() {
         if (!currentStatus.isParsing) {
+            System.out.println("Отмена: парсинг не выполняется");
             return false;
         }
 
-        // Устанавливаем флаг отмены
+        System.out.println("🚫 Запрос на отмену парсинга...");
         currentStatus.isCancelled = true;
 
-        // Пытаемся прервать задачу
+        // 1. Прерываем основной поток
         if (parsingTask != null && !parsingTask.isDone()) {
             parsingTask.cancel(true);
         }
 
-        System.out.println("Парсинг отменен по запросу пользователя");
+        // 2. Вызываем cleanup в LogFileParser
+        try {
+            logFileParser.cleanup();
+        } catch (Exception e) {
+            System.err.println("Ошибка при очистке ресурсов: " + e.getMessage());
+        }
+
+        // 3. Прерываем активные соединения с БД
+        new Thread(() -> {
+            try (Connection cancelConn = DriverManager.getConnection(
+                    DatabaseConfig.DB_URL,
+                    DatabaseConfig.DB_USERNAME,
+                    DatabaseConfig.DB_PASSWORD)) {
+
+                // Находим и прерываем наш бэкенд процесс
+                String findPidSql = "SELECT pid FROM pg_stat_activity " +
+                        "WHERE usename = ? AND state = 'active' " +
+                        "AND query LIKE '%COPY%' OR query LIKE '%CREATE INDEX%' " +
+                        "ORDER BY backend_start DESC LIMIT 1";
+
+                try (PreparedStatement ps = cancelConn.prepareStatement(findPidSql)) {
+                    ps.setString(1, DatabaseConfig.DB_USERNAME);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) {
+                            int pid = rs.getInt("pid");
+                            try (Statement stmt = cancelConn.createStatement()) {
+                                stmt.execute("SELECT pg_terminate_backend(" + pid + ")");
+                                System.out.println("✅ Бэкенд процесс " + pid + " завершен");
+                            }
+                        }
+                    }
+                }
+
+                // Отменяем текущую транзакцию
+                try (Statement stmt = cancelConn.createStatement()) {
+                    stmt.execute("SELECT pg_cancel_backend(pg_backend_pid())");
+                }
+
+            } catch (SQLException e) {
+                System.out.println("ℹ️ Отмена БД: " + e.getMessage());
+            }
+        }).start();
+
+        // 4. Обновляем статус
+        currentStatus.status = "🚫 Отмена парсинга...";
+        currentStatus.stageName = "Отмена";
+        currentStatus.estimatedTimeRemaining = 0;
+
+        System.out.println("✅ Запрос на отмену отправлен");
         return true;
     }
 

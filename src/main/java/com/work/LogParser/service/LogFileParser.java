@@ -41,6 +41,12 @@ public class LogFileParser {
     private static final int COPY_BUFFER_SIZE = 64 * 1024; // 64 KB для COPY
     private static final int BATCH_COMMIT_SIZE = 100000; // 100K записей на транзакцию
 
+    private Thread copyThread;
+    private PipedOutputStream pos;
+    private PipedInputStream pis;
+    private BufferedReader reader;
+    private volatile boolean cleanupDone = false;
+
     private static final Pattern LOG_PATTERN = Pattern.compile(
             "^" +
                     "(\\d+\\.\\d+)\\s+" +              // 1. timestamp
@@ -79,25 +85,32 @@ public class LogFileParser {
         long startTime = System.currentTimeMillis();
         long totalRecords = 0;
         long totalLines = 0;
-
-        // Временные метки для каждого этапа
         long parsingStageDuration = 0;
 
-        // Веса этапов
-        final double COUNTING_WEIGHT = 0.0044;      // 0.44%
-        final double PARSING_WEIGHT = 386.5 / 1226.5; // ~0.3152
-        final double FINALIZATION_WEIGHT = 450 / 1226.5; // ~0.3669
-        final double INDEXING_WEIGHT = 220 / 1226.5;     // ~0.1794
-        final double STATISTICS_WEIGHT = 170 / 1226.5;   // ~0.1386
+        final double COUNTING_WEIGHT = 0.0044;
+        final double PARSING_WEIGHT = 386.5 / 1226.5;
+        final double FINALIZATION_WEIGHT = 450 / 1226.5;
+        final double INDEXING_WEIGHT = 220 / 1226.5;
+        final double STATISTICS_WEIGHT = 170 / 1226.5;
 
         System.out.println("Начало гибридного парсинга с оптимизацией...");
+
+        // Сбрасываем флаги очистки
+        cleanupDone = false;
+        copyThread = null;
+        pos = null;
+        pis = null;
+        reader = null;
 
         try (Connection conn = DriverManager.getConnection(
                 DatabaseConfig.DB_URL,
                 DatabaseConfig.DB_USERNAME,
                 DatabaseConfig.DB_PASSWORD)) {
 
-            currentStatus.parsingSpeed = 1000; // Начальная скорость по умолчанию
+            // Устанавливаем таймаут на соединение
+            conn.setNetworkTimeout(null, 60000); // 60 секунд
+
+            currentStatus.parsingSpeed = 1000;
             currentStatus.parsingStageStartTime = System.currentTimeMillis();
             currentStatus.lastProgressUpdateTime = System.currentTimeMillis();
             currentStatus.lastProcessedCount = 0;
@@ -106,6 +119,13 @@ public class LogFileParser {
             databaseManager.ensureLogsTableExists(conn);
             databaseManager.createStatusesTable(conn);
             databaseManager.createActionsTable(conn);
+
+            // Проверка отмены перед началом
+            if (currentStatus.isCancelled) {
+                System.out.println("Парсинг отменен до начала");
+                finishWithCancellation(currentStatus);
+                return;
+            }
 
             if (!shouldParseLogs(conn, filePath)) {
                 System.out.println("Парсинг не требуется");
@@ -116,32 +136,41 @@ public class LogFileParser {
                 return;
             }
 
-            // ===== ИСПРАВЛЕНИЕ: ПОДСЧЕТ СТРОК =====
+            // ===== ПОДСЧЕТ СТРОК =====
             currentStatus.stageName = "📊 Подсчет строк";
             currentStatus.stageProgress = 0;
             currentStatus.progress = 0;
             currentStatus.status = "Подсчет строк...";
 
-            // Запускаем подсчет строк в отдельном потоке с таймаутом
+            // Запускаем подсчет строк с поддержкой отмены
             final long[] lineCount = new long[1];
             Thread countThread = new Thread(() -> {
                 try {
                     lineCount[0] = estimateLineCountWithNIO(filePath);
                 } catch (Exception e) {
-                    System.err.println("Ошибка подсчета строк: " + e.getMessage());
-                    lineCount[0] = 1000000; // 1 млн строк по умолчанию
+                    if (!currentStatus.isCancelled) {
+                        System.err.println("Ошибка подсчета строк: " + e.getMessage());
+                    }
+                    lineCount[0] = 1000000;
                 }
             });
 
             countThread.start();
 
-            // Ждем максимум 10 секунд
+            // Ждем максимум 10 секунд с проверкой отмены
             try {
-                countThread.join(10000);
-                if (countThread.isAlive()) {
+                long waitStart = System.currentTimeMillis();
+                while (countThread.isAlive() && !currentStatus.isCancelled) {
+                    if (System.currentTimeMillis() - waitStart > 10000) {
+                        countThread.interrupt();
+                        break;
+                    }
+                    Thread.sleep(100);
+                }
+                if (currentStatus.isCancelled) {
                     countThread.interrupt();
-                    System.out.println("⚠️ Подсчет строк занял больше 10 секунд, используем оценку");
-                    lineCount[0] = estimateLineCountWithNIO(filePath);
+                    finishWithCancellation(currentStatus);
+                    return;
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -150,11 +179,15 @@ public class LogFileParser {
             totalLines = lineCount[0] > 0 ? lineCount[0] : 1000000;
             currentStatus.total = totalLines;
 
-            // Сразу устанавливаем 100% для этапа подсчета строк
             currentStatus.stageProgress = 100;
-            currentStatus.progress = (int)(COUNTING_WEIGHT * 100);
+            currentStatus.progress = (int) (COUNTING_WEIGHT * 100);
             currentStatus.status = "Подсчет строк завершен: " + String.format("%,d", totalLines) + " строк";
-            System.out.println("Строк для обработки: " + String.format("%,d", totalLines));
+
+            // Проверка отмены после подсчета строк
+            if (currentStatus.isCancelled) {
+                finishWithCancellation(currentStatus);
+                return;
+            }
 
             // 3. Очистка и создание таблицы
             databaseManager.clearLogsTable(conn);
@@ -166,34 +199,39 @@ public class LogFileParser {
             // 5. Гибридная загрузка
             System.out.println("Начало гибридной загрузки с оптимизированным чтением...");
             currentStatus.stageName = "🚀 Парсинг данных";
-            currentStatus.parsingStageStartTime = System.currentTimeMillis(); // Начало этапа парсинга
+            currentStatus.parsingStageStartTime = System.currentTimeMillis();
 
-            // Создаем Piped потоки для потокового COPY
-            PipedOutputStream pos = new PipedOutputStream();
-            PipedInputStream pis = new PipedInputStream(pos, MEMORY_BUFFER_SIZE);
+            // Создаем Piped потоки с таймаутом
+            pos = new PipedOutputStream();
+            pis = new PipedInputStream(pos, MEMORY_BUFFER_SIZE);
 
             // Запускаем COPY в отдельном потоке
-            Thread copyThread = new Thread(() -> {
-                performStreamingCopyWithOptimization(conn, pis, currentStatus);
+            final InputStream dataStreamForCopy = pis;
+            copyThread = new Thread(() -> {
+                performStreamingCopyWithOptimization(conn, dataStreamForCopy, currentStatus);
             });
             copyThread.start();
 
             // Основной поток: парсинг с оптимизированным чтением
-            try (BufferedReader br = createOptimizedReader(filePath);
-                 BufferedWriter writer = new BufferedWriter(
-                         new OutputStreamWriter(pos, StandardCharsets.UTF_8),
-                         COPY_BUFFER_SIZE)) {
+            try {
+                reader = createOptimizedReader(filePath);
+                BufferedWriter writer = new BufferedWriter(
+                        new OutputStreamWriter(pos, StandardCharsets.UTF_8),
+                        COPY_BUFFER_SIZE);
 
                 String line;
                 long lineNumber = 0;
                 long recordsInBatch = 0;
-                long batchStartTime = System.currentTimeMillis();
 
-                while ((line = br.readLine()) != null) {
+                while ((line = reader.readLine()) != null) {
                     lineNumber++;
 
+                    // Проверка отмены на каждой итерации
                     if (currentStatus.isCancelled) {
-                        System.out.println("Парсинг прерван");
+                        System.out.println("🚫 Парсинг прерван пользователем на строке " + lineNumber);
+                        writer.flush();
+                        writer.close();
+                        pos.close();
                         break;
                     }
 
@@ -207,7 +245,6 @@ public class LogFileParser {
                         if (lineNumber % 5000 == 0) {
                             currentStatus.processed = lineNumber;
 
-                            // ОБНОВЛЯЕМ СКОРОСТЬ КАЖДЫЕ 5000 СТРОК
                             long currentTime = System.currentTimeMillis();
                             if (currentStatus.parsingStageStartTime > 0) {
                                 long elapsedSeconds = (currentTime - currentStatus.parsingStageStartTime) / 1000;
@@ -220,15 +257,17 @@ public class LogFileParser {
                             double overallProgress = COUNTING_WEIGHT * 100 +
                                     (PARSING_WEIGHT * 100 * stageProgress / 100.0);
 
-                            currentStatus.stageProgress = (int)stageProgress;
-                            currentStatus.progress = (int)overallProgress;
+                            currentStatus.stageProgress = (int) stageProgress;
+                            currentStatus.progress = (int) overallProgress;
                         }
                     }
                 }
 
-                // Финализация записи
-                writer.flush();
-                writer.close();
+                // Если не было отмены, финализируем запись
+                if (!currentStatus.isCancelled) {
+                    writer.flush();
+                    writer.close();
+                }
 
                 // Замеряем время парсинга
                 parsingStageDuration = System.currentTimeMillis() - currentStatus.parsingStageStartTime;
@@ -236,19 +275,42 @@ public class LogFileParser {
 
                 currentStatus.actualParsingTime = parsingStageDuration;
                 currentStatus.parsingDuration = parsingStageDuration;
-                currentStatus.parsingCompleted = true;
+                currentStatus.parsingCompleted = !currentStatus.isCancelled;
 
-                // Устанавливаем 100% прогресс парсинга
-                currentStatus.stageProgress = 100;
-                currentStatus.progress = (int)(COUNTING_WEIGHT * 100 + PARSING_WEIGHT * 100);
+                if (!currentStatus.isCancelled) {
+                    currentStatus.stageProgress = 100;
+                    currentStatus.progress = (int) (COUNTING_WEIGHT * 100 + PARSING_WEIGHT * 100);
+                }
 
-            } catch (Exception e) {
-                System.err.println("Ошибка при чтении/записи: " + e.getMessage());
-                throw e;
+            } catch (IOException e) {
+                if (currentStatus.isCancelled) {
+                    System.out.println("Парсинг отменен, игнорируем ошибку ввода-вывода");
+                } else {
+                    System.err.println("Ошибка при чтении/записи: " + e.getMessage());
+                    throw e;
+                }
+            } finally {
+                // Закрываем ресурсы
+                try {
+                    if (reader != null) reader.close();
+                } catch (IOException ignored) {
+                }
             }
 
-            // Ждем завершения COPY
-            copyThread.join();
+            // Ждем завершения COPY с таймаутом
+            if (copyThread != null && copyThread.isAlive()) {
+                copyThread.join(30000); // Максимум 30 секунд ожидания
+                if (copyThread.isAlive()) {
+                    copyThread.interrupt();
+                    System.out.println("⚠️ COPY поток не отвечает, принудительное завершение");
+                }
+            }
+
+            // Если была отмена, не выполняем дальнейшие этапы
+            if (currentStatus.isCancelled) {
+                finishWithCancellation(currentStatus);
+                return;
+            }
 
             // 6. Восстановление настроек БД
             databaseManager.restoreConnectionSettings(conn);
@@ -263,7 +325,14 @@ public class LogFileParser {
             }
 
         } catch (Exception e) {
-            handleParsingError(currentStatus, e);
+            if (!currentStatus.isCancelled) {
+                handleParsingError(currentStatus, e);
+            } else {
+                System.out.println("Парсинг отменен, ошибка игнорируется: " + e.getMessage());
+                finishWithCancellation(currentStatus);
+            }
+        } finally {
+            cleanup();
         }
     }
 
@@ -349,11 +418,26 @@ public class LogFileParser {
 
     private void performStreamingCopyWithOptimization(Connection conn, InputStream dataStream, ParsingStatus status) {
         System.out.println("Запуск оптимизированного потокового COPY...");
+        final InputStream localDataStream = dataStream;
 
         try {
+            // Проверка отмены перед началом
+            if (status.isCancelled || Thread.currentThread().isInterrupted()) {
+                System.out.println("COPY отменен перед запуском");
+                try {
+                    localDataStream.close();
+                } catch (IOException ignored) {
+                }
+                return;
+            }
+
+            // Устанавливаем таймаут на соединение
+            if (conn instanceof BaseConnection) {
+                ((BaseConnection) conn).setNetworkTimeout(null, 30000); // 30 секунд
+            }
+
             CopyManager copyManager = new CopyManager((BaseConnection) conn);
 
-            // COPY с настройками для максимальной производительности
             String copySql = "COPY logs_unlogged(time, ip, username, url, status_code, domain, " +
                     "response_time_ms, response_size_bytes, action) " +
                     "FROM STDIN WITH (" +
@@ -365,16 +449,125 @@ public class LogFileParser {
                     "QUOTE '\"')";
 
             long startCopyTime = System.currentTimeMillis();
-            long rowsImported = copyManager.copyIn(copySql, dataStream, 65536); // 64KB буфер
+
+            // Запускаем COPY с возможностью прерывания
+            final Exception[] copyError = new Exception[1];
+            final long[] rowsImported = new long[1];
+
+            Thread copyExecutor = new Thread(() -> {
+                try {
+                    rowsImported[0] = copyManager.copyIn(copySql, localDataStream, 65536);
+                } catch (Exception e) {
+                    copyError[0] = e;
+                }
+            });
+
+            copyExecutor.start();
+
+            // Мониторим выполнение COPY с проверкой отмены
+            while (copyExecutor.isAlive()) {
+                if (status.isCancelled || Thread.currentThread().isInterrupted()) {
+                    System.out.println("🚫 COPY отменен пользователем");
+                    copyExecutor.interrupt();
+
+                    // Прерываем операцию COPY через БД
+                    try {
+                        Statement stmt = conn.createStatement();
+                        stmt.execute("SELECT pg_cancel_backend(pg_backend_pid())");
+                        stmt.close();
+                    } catch (SQLException ignored) {
+                    }
+
+                    copyExecutor.join(5000);
+                    if (copyExecutor.isAlive()) {
+                        copyExecutor.interrupt(); // deprecated, но как крайняя мера
+                    }
+                    return;
+                }
+                Thread.sleep(100);
+            }
+
+            // Если произошла ошибка и это не отмена
+            if (copyError[0] != null && !status.isCancelled) {
+                throw copyError[0];
+            }
 
             long copyTime = System.currentTimeMillis() - startCopyTime;
-            System.out.printf("COPY завершен за %.1f секунд. Загружено: %,d строк (%.0f строк/сек)%n",
-                    copyTime / 1000.0, rowsImported, rowsImported / (copyTime / 1000.0));
+            if (!status.isCancelled) {
+                System.out.printf("COPY завершен за %.1f секунд. Загружено: %,d строк (%.0f строк/сек)%n",
+                        copyTime / 1000.0, rowsImported[0], rowsImported[0] / (copyTime / 1000.0));
+            }
 
         } catch (Exception e) {
-            System.err.println("Ошибка при выполнении COPY: " + e.getMessage());
-            throw new RuntimeException("COPY failed", e);
+            if (!status.isCancelled) {
+                System.err.println("Ошибка при выполнении COPY: " + e.getMessage());
+                throw new RuntimeException("COPY failed", e);
+            }
+        } finally {
+            try {
+                localDataStream.close();
+            } catch (IOException ignored) {
+            }
         }
+    }
+
+    private void finishWithCancellation(ParsingStatus status) {
+        status.isParsing = false;
+        status.isCancelled = true;
+        status.status = "🚫 Парсинг отменен пользователем";
+        status.progress = 0;
+        status.stageProgress = 0;
+        status.stageName = "Отменено";
+        status.estimatedTimeRemaining = 0;
+
+        System.out.println("🚫 Парсинг отменен пользователем");
+        cleanup();
+    }
+
+    public void cleanup() {
+        if (cleanupDone) return;
+        cleanupDone = true;
+
+        System.out.println("🧹 Очистка ресурсов парсинга...");
+
+        // Закрываем reader
+        if (reader != null) {
+            try {
+                reader.close();
+            } catch (IOException ignored) {
+            }
+            reader = null;
+        }
+
+        // Закрываем выходной поток
+        if (pos != null) {
+            try {
+                pos.close();
+            } catch (IOException ignored) {
+            }
+            pos = null;
+        }
+
+        // Закрываем входной поток
+        if (pis != null) {
+            try {
+                pis.close();
+            } catch (IOException ignored) {
+            }
+            pis = null;
+        }
+
+        // Прерываем COPY поток
+        if (copyThread != null && copyThread.isAlive()) {
+            copyThread.interrupt();
+            try {
+                copyThread.join(5000);
+            } catch (InterruptedException ignored) {
+            }
+            copyThread = null;
+        }
+
+        System.out.println("✅ Очистка ресурсов завершена");
     }
 
     private void updateProgress(ParsingStatus status, long lineNumber, long totalLines,
@@ -420,8 +613,12 @@ public class LogFileParser {
         final double FINALIZATION_WEIGHT = 450.0;
         final double INDEXING_WEIGHT = 220.0;
         final double STATISTICS_WEIGHT = 170.0;
-        final double TOTAL_WEIGHT = PARSING_WEIGHT + FINALIZATION_WEIGHT +
-                INDEXING_WEIGHT + STATISTICS_WEIGHT;
+
+        // ✅ ПРОВЕРКА ОТМЕНЫ
+        if (status.isCancelled) {
+            System.out.println("🚫 Завершающая обработка отменена");
+            throw new InterruptedException("Отменено пользователем");
+        }
 
         // ✅ ИСПРАВЛЕНИЕ: Расчет времени этапов на основе времени парсинга
         status.actualParsingTime = parsingDuration;
@@ -447,6 +644,12 @@ public class LogFileParser {
         long currentTime = System.currentTimeMillis();
 
         // === ЭТАП ФИНАЛИЗАЦИИ ===
+        // ✅ ПРОВЕРКА ОТМЕНЫ
+        if (status.isCancelled) {
+            System.out.println("🚫 Финализация отменена");
+            throw new InterruptedException("Отменено пользователем");
+        }
+
         status.stageStartTime = System.currentTimeMillis();
         status.stageName = "🗃️ Финализация таблицы";
         status.stageProgress = 0;
@@ -457,11 +660,14 @@ public class LogFileParser {
         Thread finalizationThread = new Thread(() -> {
             try {
                 long finalizationStartTime = System.currentTimeMillis();
-                databaseManager.finalizeTable(conn, null);
+                databaseManager.finalizeTable(conn, null, status);
                 long finalizationEndTime = System.currentTimeMillis();
                 actualFinalizationTime.set(finalizationEndTime - finalizationStartTime);
                 finalizationCompleted.set(true);
                 System.out.println("Финализация выполнена за " + (actualFinalizationTime.get() / 1000.0) + " сек");
+            } catch (InterruptedException e) {
+                System.out.println("🚫 Финализация прервана: " + e.getMessage());
+                finalizationCompleted.set(false);
             } catch (Exception e) {
                 System.err.println("Ошибка при финализации: " + e.getMessage());
                 finalizationCompleted.set(true);
@@ -470,11 +676,20 @@ public class LogFileParser {
 
         finalizationThread.start();
 
-        // Мониторинг финализации
+        // Мониторинг финализации с проверкой отмены
         long finalizationStartTime = System.currentTimeMillis();
         while (finalizationThread.isAlive()) {
+            // ✅ ПРОВЕРКА ОТМЕНЫ
+            if (status.isCancelled) {
+                System.out.println("🚫 Отмена во время финализации");
+                finalizationThread.interrupt();
+                status.estimatedTimeRemaining = status.estimatedIndexingTime + status.estimatedStatisticsTime;
+                throw new InterruptedException("Отменено пользователем");
+            }
+
             long elapsedFinalizationTime = System.currentTimeMillis() - finalizationStartTime;
-            double stageProgress = Math.min(99.0, (elapsedFinalizationTime * 100.0) / status.estimatedFinalizationTime);
+            double stageProgress = Math.min(99.0, (elapsedFinalizationTime * 100.0) /
+                    Math.max(1, status.estimatedFinalizationTime));
 
             // ✅ ИСПРАВЛЕНИЕ: Обновляем общее оставшееся время
             long remainingFinalization = (long) (status.estimatedFinalizationTime * (100 - stageProgress) / 100.0);
@@ -490,6 +705,12 @@ public class LogFileParser {
             status.status = "Финализация таблицы...";
 
             Thread.sleep(500);
+        }
+
+        // ✅ ПРОВЕРКА ОТМЕНЫ
+        if (status.isCancelled) {
+            System.out.println("🚫 Отмена после финализации");
+            throw new InterruptedException("Отменено пользователем");
         }
 
         // Завершение финализации
@@ -513,6 +734,12 @@ public class LogFileParser {
         currentTime = System.currentTimeMillis();
 
         // === ЭТАП ИНДЕКСАЦИИ ===
+        // ✅ ПРОВЕРКА ОТМЕНЫ
+        if (status.isCancelled) {
+            System.out.println("🚫 Индексация отменена");
+            throw new InterruptedException("Отменено пользователем");
+        }
+
         status.stageStartTime = System.currentTimeMillis();
         status.stageName = "📈 Создание индексов";
         status.stageProgress = 0;
@@ -526,8 +753,11 @@ public class LogFileParser {
             try {
                 databaseManager.createIndexesWithProgressTracking(conn, (weightProgress) -> {
                     currentIndexWeight.set(weightProgress);
-                });
+                }, status);
                 indexingCompleted.set(true);
+            } catch (InterruptedException e) {
+                System.out.println("🚫 Индексация прервана: " + e.getMessage());
+                indexingCompleted.set(false);
             } catch (Exception e) {
                 System.err.println("Ошибка при создании индексов: " + e.getMessage());
                 indexingCompleted.set(true);
@@ -536,12 +766,27 @@ public class LogFileParser {
 
         indexingThread.start();
 
-        // Мониторинг индексации
+        // Мониторинг индексации с проверкой отмены
         long indexingStartTime = System.currentTimeMillis();
         while (indexingThread.isAlive()) {
+            // ✅ ПРОВЕРКА ОТМЕНЫ
+            if (status.isCancelled) {
+                System.out.println("🚫 Отмена во время индексации");
+                indexingThread.interrupt();
+
+                // Отменяем операции создания индексов в БД
+                try (Statement cancelStmt = conn.createStatement()) {
+                    cancelStmt.execute("SELECT pg_cancel_backend(pg_backend_pid())");
+                } catch (SQLException ignored) {}
+
+                status.estimatedTimeRemaining = status.estimatedStatisticsTime;
+                throw new InterruptedException("Отменено пользователем");
+            }
+
             long elapsedIndexingTime = System.currentTimeMillis() - indexingStartTime;
 
-            double timeBasedProgress = Math.min(99, (elapsedIndexingTime * 100.0) / status.estimatedIndexingTime);
+            double timeBasedProgress = Math.min(99, (elapsedIndexingTime * 100.0) /
+                    Math.max(1, status.estimatedIndexingTime));
             double indexBasedProgress = Math.min(99, (currentIndexWeight.get() * 100.0) / totalIndexWeight);
             double stageProgress = Math.min(99, (timeBasedProgress * 0.5) + (indexBasedProgress * 0.5));
 
@@ -559,6 +804,12 @@ public class LogFileParser {
             Thread.sleep(1000);
         }
 
+        // ✅ ПРОВЕРКА ОТМЕНЫ
+        if (status.isCancelled) {
+            System.out.println("🚫 Отмена после индексации");
+            throw new InterruptedException("Отменено пользователем");
+        }
+
         // Завершение индексации
         status.stageProgress = 100;
         status.progress = (int)((countingWeight + parsingWeight + finalizationWeight + indexingWeight) * 100);
@@ -573,6 +824,12 @@ public class LogFileParser {
         currentTime = System.currentTimeMillis();
 
         // === ЭТАП СТАТИСТИКИ ===
+        // ✅ ПРОВЕРКА ОТМЕНЫ
+        if (status.isCancelled) {
+            System.out.println("🚫 Статистика отменена");
+            throw new InterruptedException("Отменено пользователем");
+        }
+
         status.stageStartTime = System.currentTimeMillis();
         status.stageName = "📊 Обновление статистики";
         status.stageProgress = 0;
@@ -583,9 +840,29 @@ public class LogFileParser {
             try {
                 long statsStartTime = System.currentTimeMillis();
 
+                // ✅ ПРОВЕРКА ОТМЕНЫ внутри потока
+                if (status.isCancelled) {
+                    System.out.println("🚫 Статистика отменена");
+                    return;
+                }
+
                 databaseManager.updateStatistics(conn);
+
+                // ✅ ПРОВЕРКА ОТМЕНЫ
+                if (status.isCancelled) {
+                    System.out.println("🚫 Статистика отменена после updateStatistics");
+                    return;
+                }
+
                 System.out.println("📊 Вычисление и сохранение агрегированной статистики...");
                 aggregatedStatsService.calculateAndSaveDefaultStats();
+
+                // ✅ ПРОВЕРКА ОТМЕНЫ
+                if (status.isCancelled) {
+                    System.out.println("🚫 Статистика отменена после calculateAndSaveDefaultStats");
+                    return;
+                }
+
                 System.out.println("🔄 Обновление прерассчитанных топов...");
                 precalculatedTopService.updatePrecalculatedTops();
 
@@ -593,18 +870,29 @@ public class LogFileParser {
                 System.out.println("Статистика обновлена за " + ((statsEndTime - statsStartTime) / 1000.0) + " сек");
                 statsCompleted.set(true);
             } catch (Exception e) {
-                System.err.println("⚠ Ошибка обновления статистики: " + e.getMessage());
-                statsCompleted.set(true);
+                if (!status.isCancelled) {
+                    System.err.println("⚠ Ошибка обновления статистики: " + e.getMessage());
+                }
+                statsCompleted.set(false);
             }
         });
 
         statisticsThread.start();
 
-        // Мониторинг статистики
+        // Мониторинг статистики с проверкой отмены
         long statsStartTime = System.currentTimeMillis();
         while (statisticsThread.isAlive()) {
+            // ✅ ПРОВЕРКА ОТМЕНЫ
+            if (status.isCancelled) {
+                System.out.println("🚫 Отмена во время обновления статистики");
+                statisticsThread.interrupt();
+                status.estimatedTimeRemaining = 0;
+                throw new InterruptedException("Отменено пользователем");
+            }
+
             long elapsedStatsTime = System.currentTimeMillis() - statsStartTime;
-            double stageProgress = Math.min(99, (elapsedStatsTime * 100.0) / status.estimatedStatisticsTime);
+            double stageProgress = Math.min(99, (elapsedStatsTime * 100.0) /
+                    Math.max(1, status.estimatedStatisticsTime));
 
             // ✅ ИСПРАВЛЕНИЕ: Обновляем общее оставшееся время
             long remainingStatistics = (long) (status.estimatedStatisticsTime * (100 - stageProgress) / 100.0);
@@ -620,13 +908,19 @@ public class LogFileParser {
             Thread.sleep(1000);
         }
 
+        // ✅ ПРОВЕРКА ОТМЕНЫ
+        if (status.isCancelled) {
+            System.out.println("🚫 Отмена после статистики");
+            throw new InterruptedException("Отменено пользователем");
+        }
+
         // Завершение статистики
         status.actualStatisticsTime = System.currentTimeMillis() - statsStartTime;
         status.statisticsCompleted = true;
         status.estimatedTimeRemaining = 0; // ✅ Все этапы завершены
 
         // Финальный статус
-        if (statsCompleted.get()) {
+        if (!status.isCancelled && statsCompleted.get()) {
             status.stageProgress = 100;
             status.progress = 100;
             status.isParsing = false;
@@ -640,6 +934,12 @@ public class LogFileParser {
                     totalLines, totalRecords,
                     totalRecords / ((System.currentTimeMillis() - startTime) / 1000.0)
             );
+        } else if (status.isCancelled) {
+            status.stageProgress = 0;
+            status.progress = 0;
+            status.isParsing = false;
+            status.stageName = "🚫 Отменено";
+            status.status = "Парсинг отменен пользователем";
         } else {
             status.stageProgress = 100;
             status.progress = 100;
