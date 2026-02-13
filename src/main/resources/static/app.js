@@ -2567,6 +2567,7 @@ async function cancelParsing() {
         // Сбрасываем состояние
         resetRequestState();
         enableAllButtons();
+        resetParsingUI();
         
         showNotification('Ошибка при отмене парсинга', true);
         
@@ -2643,6 +2644,9 @@ function resetRequestState() {
     
     // Разблокируем все кнопки
     enableAllButtons();
+
+    const checkFileButton = document.querySelector('button[onclick="validateFilePath()"]');
+    if (checkFileButton) checkFileButton.disabled = false;
     
     // Скрываем кнопку отмены
     const cancelBtn = document.getElementById('cancelRequestBtn');
@@ -2676,6 +2680,11 @@ function disableAllButtons() {
         parsingButton.disabled = true;
     }
     
+    const checkFileButton = document.querySelector('button[onclick="validateFilePath()"]');
+    if (checkFileButton) {
+        checkFileButton.disabled = true;
+    }
+
     // Кнопки в шапке (тема)
     const themeButton = document.querySelector('.header-theme-button button');
     if (themeButton) {
@@ -2723,6 +2732,7 @@ function enableAllButtons() {
     if (!parsingInterval) {
         const parsingButton = document.getElementById('startParsingBtn');
         const fileInput = document.getElementById('filePathInput');
+        const checkFileButton = document.querySelector('button[onclick="validateFilePath()"]');
         
         if (parsingButton && fileInput) {
             const isValid = parsingButton.getAttribute('data-file-valid') === 'true';
@@ -2730,6 +2740,7 @@ function enableAllButtons() {
             if (isRequestInProgress && activeRequestType === 'parsing') {
                 parsingButton.disabled = true;
                 parsingButton.textContent = '⏳ Парсинг...';
+                if (checkFileButton) checkFileButton.disabled = true;
             } else {
                 parsingButton.disabled = !isValid;
                 
@@ -2738,6 +2749,8 @@ function enableAllButtons() {
                 } else if (isValid) {
                     parsingButton.textContent = '🚀 Начать парсинг';
                 }
+
+                if (checkFileButton) checkFileButton.disabled = false;
             }
         }
     }

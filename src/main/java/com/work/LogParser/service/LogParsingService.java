@@ -856,9 +856,20 @@ public class LogParsingService {
         }).start();
 
         // 4. Обновляем статус
-        currentStatus.status = "🚫 Отмена парсинга...";
-        currentStatus.stageName = "Отмена";
+        currentStatus.isParsing = false;
+        currentStatus.isCancelled = true;
+        currentStatus.status = "🚫 Парсинг отменен пользователем";
+        currentStatus.stageName = "Отменено";
+        currentStatus.progress = 0;
+        currentStatus.stageProgress = 0;
         currentStatus.estimatedTimeRemaining = 0;
+        currentStatus.parsingCompleted = false;
+        currentStatus.finalizationCompleted = false;
+        currentStatus.indexingCompleted = false;
+        currentStatus.statisticsCompleted = false;
+        currentStatus.parsingSpeed = 0;
+        currentStatus.processed = 0;
+        currentStatus.total = 0;
 
         System.out.println("✅ Запрос на отмену отправлен");
         return true;
