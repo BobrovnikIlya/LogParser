@@ -308,11 +308,6 @@ public class DatabaseManager {
             st.execute("ALTER TABLE logs_unlogged RENAME TO logs");
             if (status != null && status.isCancelled) throw new InterruptedException("Отменено");
 
-            // 5. Пополняем статусы и действия
-            if (status == null || !status.isCancelled) {
-                populateStatusesAndActions(conn);
-            }
-
             if (originalAutoCommit) {
                 conn.commit();
                 conn.setAutoCommit(true);
@@ -460,7 +455,7 @@ public class DatabaseManager {
         }
     }
 
-    private void populateStatusesAndActions(Connection conn) throws SQLException {
+    public void populateStatusesAndActions(Connection conn) throws SQLException {
         System.out.println("Заполнение таблиц статусов и действий...");
 
         // 1. Заполняем статусы

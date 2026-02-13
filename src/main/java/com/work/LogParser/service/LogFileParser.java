@@ -720,6 +720,12 @@ public class LogFileParser {
         status.actualFinalizationTime = actualFinalizationTime.get();
         status.finalizationCompleted = true;
 
+        try (Connection newConn = conn) {
+            databaseManager.populateStatusesAndActions(newConn);
+        } catch (Exception e) {
+            System.err.println("Ошибка заполнения статусов/действий: " + e.getMessage());
+        }
+
         try {
             filterCacheService.invalidateCacheAfterDataChange();
             System.out.println("🧹 Кэш фильтров очищен после загрузки новых данных");
