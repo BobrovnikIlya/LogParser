@@ -12,20 +12,20 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static com.work.LogParser.config.DatabaseConfig.*;
+
 @Service
 public class AggregatedStatsService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /**
-     * Сохраняет агрегированную статистику в БД
-     */
+    // Сохраняет агрегированную статистику в БД
     public void saveAggregatedStats(Map<String, Object> stats,
                                     LocalDateTime periodStart,
                                     LocalDateTime periodEnd,
                                     boolean isDefault) {
         try (Connection conn = DriverManager.getConnection(
-                DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD)) {
+                DB_URL, DB_USERNAME, DB_PASSWORD)) {
 
             ensureStatsTableExists(conn);
 
@@ -76,12 +76,10 @@ public class AggregatedStatsService {
         }
     }
 
-    /**
-     * Получает агрегированную статистику из БД по периоду
-     */
+    // Получает агрегированную статистику из БД по периоду
     public Map<String, Object> getAggregatedStats(LocalDateTime dateFrom, LocalDateTime dateTo) {
         try (Connection conn = DriverManager.getConnection(
-                DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD)) {
+                DB_URL, DB_USERNAME, DB_PASSWORD)) {
 
             if (!statsTableExists(conn)) {
                 return null;
@@ -121,9 +119,7 @@ public class AggregatedStatsService {
         return null;
     }
 
-    /**
-     * Проверяет существование таблицы
-     */
+    // Проверяет существование таблицы
     private boolean statsTableExists(Connection conn) throws SQLException {
         try (Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(
@@ -132,9 +128,7 @@ public class AggregatedStatsService {
         }
     }
 
-    /**
-     * Создает таблицу для агрегированной статистики
-     */
+    // Создает таблицу для агрегированной статистики
     private void ensureStatsTableExists(Connection conn) throws SQLException {
         if (statsTableExists(conn)) {
             // Проверяем есть ли колонки для топов, если нет - добавляем
@@ -189,9 +183,7 @@ public class AggregatedStatsService {
         }
     }
 
-    /**
-     * Очищает старую дефолтную статистику
-     */
+    // Очищает старую дефолтную статистику
     private void clearDefaultStats(Connection conn) throws SQLException {
         String sql = "DELETE FROM aggregated_stats WHERE is_default = true";
         try (Statement stmt = conn.createStatement()) {
@@ -202,9 +194,7 @@ public class AggregatedStatsService {
         }
     }
 
-    /**
-     * Конвертирует ResultSet в Map статистики
-     */
+    // Конвертирует ResultSet в Map статистики
     private Map<String, Object> convertResultSetToStats(ResultSet rs) throws SQLException, JsonProcessingException {
         Map<String, Object> stats = new HashMap<>();
 
@@ -233,26 +223,20 @@ public class AggregatedStatsService {
         return stats;
     }
 
-    /**
-     * Конвертирует Map в JSON строку
-     */
+    // Конвертирует Map в JSON строку
     private String convertMapToJson(Map<String, Integer> map) throws JsonProcessingException {
         return objectMapper.writeValueAsString(map != null ? map : new HashMap<>());
     }
 
-    /**
-     * Конвертирует массив в JSON строку
-     */
+    // Конвертирует массив в JSON строку
     private String convertArrayToJson(int[] array) throws JsonProcessingException {
         return objectMapper.writeValueAsString(array != null ? array : new int[24]);
     }
 
-    /**
-     * Вычисляет и сохраняет статистику по всем данным
-     */
+    // Вычисляет и сохраняет статистику по всем данным
     public void calculateAndSaveDefaultStats() {
         try (Connection conn = DriverManager.getConnection(
-                DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD)) {
+                DB_URL, DB_USERNAME, DB_PASSWORD)) {
 
             System.out.println("📊 Вычисление дефолтной статистики по всем данным...");
 
@@ -285,9 +269,7 @@ public class AggregatedStatsService {
         }
     }
 
-    /**
-     * Вычисляет статистику для периода
-     */
+    // Вычисляет статистику для периода
     private Map<String, Object> calculateStatsForPeriod(LocalDateTime dateFrom, LocalDateTime dateTo, Connection conn)
             throws SQLException {
 
@@ -343,9 +325,7 @@ public class AggregatedStatsService {
         return stats;
     }
 
-    /**
-     * Вспомогательные методы для выполнения запросов
-     */
+    // Вспомогательные методы для выполнения запросов
     private Long executeCountQuery(String sql, Statement stmt) throws SQLException {
         try (ResultSet rs = stmt.executeQuery(sql)) {
             return rs.next() ? rs.getLong(1) : 0L;

@@ -13,6 +13,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static com.work.LogParser.config.DatabaseConfig.*;
+
 @RestController
 @RequestMapping("/api")
 @CrossOrigin(origins = "*")
@@ -364,11 +366,6 @@ public class ParsingController {
     public ResponseEntity<?> getStatuses() {
         try {
             List<Integer> statuses = new ArrayList<>();
-
-            // Используем прямое подключение как в других методах
-            String DB_URL = "jdbc:postgresql://localhost:5432/ParserLog";
-            String DB_USERNAME = "postgres";
-            String DB_PASSWORD = "uthgb123";
 
             try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
                 // Сначала проверяем существование таблицы

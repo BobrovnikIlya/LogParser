@@ -9,31 +9,27 @@ import java.sql.*;
 import java.time.LocalDateTime;
 import java.util.*;
 
+import static com.work.LogParser.config.DatabaseConfig.*;
+
 @Service
 public class PrecalculatedTopService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /**
-     * Получает прерассчитанные топ URL
-     */
+    // Получает прерассчитанные топ URL
     public List<Map<String, Object>> getPrecalculatedTopUrls(int limit) {
         return getPrecalculatedTops("urls", limit);
     }
 
-    /**
-     * Получает прерассчитанные топ пользователей
-     */
+    // Получает прерассчитанные топ пользователей
     public List<Map<String, Object>> getPrecalculatedTopUsers(int limit) {
         return getPrecalculatedTops("users", limit);
     }
 
-    /**
-     * Общая логика получения прерассчитанных топов
-     */
+    // Общая логика получения прерассчитанных топов
     private List<Map<String, Object>> getPrecalculatedTops(String type, int limit) {
         try (Connection conn = DriverManager.getConnection(
-                DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD)) {
+                DB_URL, DB_USERNAME, DB_PASSWORD)) {
 
             ensurePrecalculatedTopsTableExists(conn);
 
@@ -74,14 +70,12 @@ public class PrecalculatedTopService {
         return Collections.emptyList();
     }
 
-    /**
-     * Обновляет все прерассчитанные топы
-     */
+    // Обновляет все прерассчитанные топы
     public void updatePrecalculatedTops() {
         System.out.println("🔄 Обновление прерассчитанных топов...");
 
         try (Connection conn = DriverManager.getConnection(
-                DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD)) {
+                DB_URL, DB_USERNAME, DB_PASSWORD)) {
 
             ensurePrecalculatedTopsTableExists(conn);
             clearOldPrecalculatedTops(conn);
@@ -104,9 +98,7 @@ public class PrecalculatedTopService {
         }
     }
 
-    /**
-     * Рассчитывает топ URL
-     */
+    // Рассчитывает топ URL
     private List<Map<String, Object>> calculateTopUrls(Connection conn, int limit) throws SQLException {
         String sql = "SELECT " +
                 "url, " +
@@ -152,9 +144,7 @@ public class PrecalculatedTopService {
         return result;
     }
 
-    /**
-     * Рассчитывает топ пользователей
-     */
+    // Рассчитывает топ пользователей
     private List<Map<String, Object>> calculateTopUsers(Connection conn, int limit) throws SQLException {
         String sql = "SELECT " +
                 "min(ip) as ip," +
@@ -204,9 +194,7 @@ public class PrecalculatedTopService {
         return result;
     }
 
-    /**
-     * Сохраняет прерассчитанный топ в БД
-     */
+    // Сохраняет прерассчитанный топ в БД
     private void savePrecalculatedTop(Connection conn, String type, int limit,
                                       List<Map<String, Object>> data) throws SQLException, JsonProcessingException {
 
@@ -228,9 +216,7 @@ public class PrecalculatedTopService {
         }
     }
 
-    /**
-     * Создает таблицу для прерассчитанных топов если не существует
-     */
+    // Создает таблицу для прерассчитанных топов если не существует
     private void ensurePrecalculatedTopsTableExists(Connection conn) throws SQLException {
         if (tableExists(conn, "precalculated_tops")) {
             return;
@@ -255,9 +241,7 @@ public class PrecalculatedTopService {
         }
     }
 
-    /**
-     * Проверяет существование таблицы
-     */
+    // Проверяет существование таблицы
     private boolean tableExists(Connection conn, String tableName) throws SQLException {
         String sql = "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = ?)";
 
@@ -269,9 +253,7 @@ public class PrecalculatedTopService {
         }
     }
 
-    /**
-     * Очищает старые прерассчитанные данные (оставляет только последние для каждой комбинации)
-     */
+    // Очищает старые прерассчитанные данные (оставляет только последние для каждой комбинации)
     private void clearOldPrecalculatedTops(Connection conn) throws SQLException {
         // Удаляем дубликаты, оставляя только последние записи для каждой type+limit
         String sql = "DELETE FROM precalculated_tops WHERE id NOT IN (" +
@@ -288,9 +270,7 @@ public class PrecalculatedTopService {
         }
     }
 
-    /**
-     * Парсит JSON данные
-     */
+    // Парсит JSON данные
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> parseTopData(String json) throws JsonProcessingException {
         return objectMapper.readValue(json, List.class);

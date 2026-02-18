@@ -20,6 +20,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
+import static com.work.LogParser.config.DatabaseConfig.*;
+
 @Service
 public class LogFileParser {
 
@@ -39,7 +41,6 @@ public class LogFileParser {
 
     private static final int MEMORY_BUFFER_SIZE = 100 * 1024 * 1024; // 100 MB
     private static final int COPY_BUFFER_SIZE = 64 * 1024; // 64 KB для COPY
-    private static final int BATCH_COMMIT_SIZE = 100000; // 100K записей на транзакцию
 
     private Thread copyThread;
     private PipedOutputStream pos;
@@ -103,9 +104,9 @@ public class LogFileParser {
         reader = null;
 
         try (Connection conn = DriverManager.getConnection(
-                DatabaseConfig.DB_URL,
-                DatabaseConfig.DB_USERNAME,
-                DatabaseConfig.DB_PASSWORD)) {
+                DB_URL,
+                DB_USERNAME,
+                DB_PASSWORD)) {
 
             // Устанавливаем таймаут на соединение
             conn.setNetworkTimeout(null, 60000); // 60 секунд
@@ -572,35 +573,6 @@ public class LogFileParser {
         System.out.println("✅ Очистка ресурсов завершена");
     }
 
-    private void updateProgress(ParsingStatus status, long lineNumber, long totalLines,
-                                long totalRecords, long batchStartTime) {
-        long currentTime = System.currentTimeMillis();
-        double batchTime = (currentTime - batchStartTime) / 1000.0;
-        double speed = 100000.0 / batchTime;
-
-        // ОБНОВЛЯЕМ ПОЛЯ ДЛЯ РАСЧЕТА СКОРОСТИ
-        status.processed = lineNumber;
-        status.progress = (lineNumber * 100.0) / totalLines;
-
-        // Сохраняем скорость обработки
-        if (speed > 0 && speed < 1000000) { // Разумные значения
-            status.parsingSpeed = speed;
-        }
-
-        // Обновляем время последнего прогресса каждые 2 секунды
-        if (currentTime - status.lastProgressUpdateTime > 2000) {
-            status.lastProgressUpdateTime = currentTime;
-            status.lastProcessedCount = lineNumber;
-        }
-
-        if (totalRecords % 500000 == 0) {
-            System.out.printf("[Прогресс] Обработано: %,d/%,d строк (%.1f%%), " +
-                            "Записей: %,d, Скорость: %,.0f строк/сек%n",
-                    lineNumber, totalLines, status.progress,
-                    totalRecords, speed);
-        }
-    }
-
     private void completeProcessing(Connection conn, ParsingStatus status,
                                     long startTime, long totalLines, long totalRecords,
                                     double countingWeight, double parsingWeight,
@@ -646,9 +618,9 @@ public class LogFileParser {
         long currentTime = System.currentTimeMillis();
 
         try (Connection finalizeConn = DriverManager.getConnection(
-                DatabaseConfig.DB_URL,
-                DatabaseConfig.DB_USERNAME,
-                DatabaseConfig.DB_PASSWORD)){
+                DB_URL,
+                DB_USERNAME,
+                DB_PASSWORD)){
             // === ЭТАП ФИНАЛИЗАЦИИ ===
             // ✅ ПРОВЕРКА ОТМЕНЫ
             if (status.isCancelled) {
@@ -730,9 +702,9 @@ public class LogFileParser {
 
 // Создаём НОВОЕ соединение
             try (Connection populateConn = DriverManager.getConnection(
-                    DatabaseConfig.DB_URL,
-                    DatabaseConfig.DB_USERNAME,
-                    DatabaseConfig.DB_PASSWORD)) {
+                    DB_URL,
+                    DB_USERNAME,
+                    DB_PASSWORD)) {
                 databaseManager.populateStatusesAndActions(populateConn);
                 System.out.println("✅ Статусы и действия успешно заполнены");
             } catch (Exception e) {
@@ -753,9 +725,9 @@ public class LogFileParser {
         currentTime = System.currentTimeMillis();
 
         try (Connection indexConn  = DriverManager.getConnection(
-                DatabaseConfig.DB_URL,
-                DatabaseConfig.DB_USERNAME,
-                DatabaseConfig.DB_PASSWORD)) {
+                DB_URL,
+                DB_USERNAME,
+                DB_PASSWORD)) {
             // === ЭТАП ИНДЕКСАЦИИ ===
             // ✅ ПРОВЕРКА ОТМЕНЫ
             if (status.isCancelled) {
@@ -849,9 +821,9 @@ public class LogFileParser {
         }
 
         try (Connection statsConn   = DriverManager.getConnection(
-                DatabaseConfig.DB_URL,
-                DatabaseConfig.DB_USERNAME,
-                DatabaseConfig.DB_PASSWORD)) {
+                DB_URL,
+                DB_USERNAME,
+                DB_PASSWORD)) {
             // === ЭТАП СТАТИСТИКИ ===
             // ✅ ПРОВЕРКА ОТМЕНЫ
             if (status.isCancelled) {
@@ -1000,34 +972,6 @@ public class LogFileParser {
         throw new RuntimeException("Ошибка парсинга", e);
     }
 
-    private long countLines(String filePath, ParsingStatus currentStatus) throws Exception {
-        long lines = 0;
-        try (BufferedReader br = new BufferedReader(new java.io.FileReader(filePath))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                lines++;
-
-                // ПРОВЕРКА ОТМЕНЫ КАЖДЫЕ 1000 СТРОК
-                if (lines % 1000 == 0 && currentStatus.isCancelled) {
-                    System.out.println("Подсчет строк отменен пользователем на строке " + lines);
-                    return lines; // Возвращаем текущее количество
-                }
-
-                if (lines % 1000000 == 0) {
-                    System.out.println("Подсчитано строк: " + lines);
-
-                    // Также обновляем прогресс подсчета строк в статусе
-                    if (currentStatus != null) {
-                        currentStatus.processed = lines;
-                        currentStatus.status = "Подсчет строк: " + lines;
-                    }
-                }
-            }
-        }
-        return lines;
-    }
-
-
     private boolean shouldParseLogs(Connection conn, String filePath) {
         System.out.println("Быстрая проверка актуальности...");
 
@@ -1154,9 +1098,7 @@ public class LogFileParser {
         return null;
     }
 
-    /**
-     * Форматирование в CSV
-     */
+    // Форматирование в CSV
     private String formatAsCSV(Object... values) {
         StringBuilder sb = new StringBuilder();
 
@@ -1181,9 +1123,7 @@ public class LogFileParser {
         return sb.toString();
     }
 
-    /**
-     * Парсинг кода статуса
-     */
+    // Парсинг кода статуса
     private int parseStatusCode(String statusStr, String action) {
         try {
             if (statusStr != null && !statusStr.isEmpty()) {
@@ -1203,6 +1143,4 @@ public class LogFileParser {
 
         return 0;
     }
-
-    
 }

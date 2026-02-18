@@ -7,10 +7,6 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class DataLoader implements CommandLineRunner {
-
-    @Autowired
-    private LogParsingService logParsingService;
-
     @Override
     public void run(String... args) throws Exception {
         // Теперь парсинг запускается только через API

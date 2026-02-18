@@ -10,6 +10,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
 
+import static com.work.LogParser.config.DatabaseConfig.*;
+
 @Service
 public class StatisticsService {
 
@@ -50,9 +52,7 @@ public class StatisticsService {
         return calculateRealTimeStats(whereClause);
     }
 
-    /**
-     * Извлекает дату из WHERE clause
-     */
+    // Извлекает дату из WHERE clause
     private LocalDateTime extractDateFromWhereClause(String whereClause, String dateType) {
         try {
             String searchString = dateType.equals("dateFrom") ? "time >= '" : "time <= '";
@@ -71,9 +71,7 @@ public class StatisticsService {
         return null;
     }
 
-    /**
-     * Вычисляет статистику в реальном времени
-     */
+    // Вычисляет статистику в реальном времени
     private Map<String, Object> calculateRealTimeStats(String whereClause) {
         Map<String, Object> stats = new HashMap<>();
 
@@ -112,7 +110,7 @@ public class StatisticsService {
                     " ORDER BY count DESC";
 
             Map<String, Integer> statusDistribution = new HashMap<>();
-            try (Connection conn = DriverManager.getConnection(DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD);
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD);
                  Statement stmt = conn.createStatement();
                  ResultSet rs = stmt.executeQuery(statusQuery)) {
 
@@ -130,7 +128,7 @@ public class StatisticsService {
                     " GROUP BY EXTRACT(HOUR FROM time) ORDER BY hour";
 
             int[] hourlyDistribution = new int[24];
-            try (Connection conn = DriverManager.getConnection(DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD);
+            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD);
                  Statement stmt = conn.createStatement();
                  ResultSet rs = stmt.executeQuery(hourlyQuery)) {
 
@@ -167,7 +165,7 @@ public class StatisticsService {
     }
 
     public Double executeDoubleQuery(String sql) {
-        try (Connection conn = DriverManager.getConnection(DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD);
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD);
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(sql)) {
 
@@ -182,7 +180,7 @@ public class StatisticsService {
     }
 
     public Long executeLongQuery(String sql) {
-        try (Connection conn = DriverManager.getConnection(DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD);
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD);
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(sql)) {
 
@@ -197,7 +195,7 @@ public class StatisticsService {
     }
 
     public Long executeCountQuery(String sql) {
-        try (Connection conn = DriverManager.getConnection(DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD);
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD);
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(sql)) {
 

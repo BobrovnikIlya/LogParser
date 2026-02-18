@@ -21,9 +21,7 @@ public class StatsController {
     private PrecalculatedTopService precalculatedTopService;
 
 
-    /**
-     * Принудительно пересчитать дефолтную статистику
-     */
+    // Принудительно пересчитать дефолтную статистику
     @PostMapping("/recalculate-default")
     public ResponseEntity<?> recalculateDefaultStats() {
         try {
@@ -56,9 +54,7 @@ public class StatsController {
         }
     }
 
-    /**
-     * Получить информацию об агрегированной статистике
-     */
+    // Получить информацию об агрегированной статистике
     @GetMapping("/info")
     public ResponseEntity<?> getStatsInfo() {
         try {

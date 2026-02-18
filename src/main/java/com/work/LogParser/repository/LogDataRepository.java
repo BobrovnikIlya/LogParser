@@ -9,6 +9,8 @@ import org.springframework.stereotype.Service;
 import java.sql.*;
 import java.util.*;
 
+import static com.work.LogParser.config.DatabaseConfig.*;
+
 @Service
 public class LogDataRepository {
 
@@ -206,81 +208,10 @@ public class LogDataRepository {
         }
     }
 
-    public List<Map<String, Object>> getTopUrls(int limit) {
-        List<Map<String, Object>> result = new ArrayList<>();
-        String sql = "SELECT url, domain, COUNT(*) as count " +
-                "FROM logs " +
-                "WHERE url IS NOT NULL AND url != '' " +
-                "GROUP BY url, domain " +
-                "ORDER BY count DESC " +
-                "LIMIT ?";
-
-        try (Connection conn = DriverManager.getConnection(DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD);
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setInt(1, limit);
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    Map<String, Object> item = new HashMap<>();
-                    item.put("url", rs.getString("url"));
-                    item.put("domain", rs.getString("domain"));
-                    item.put("count", rs.getInt("count"));
-                    result.add(item);
-                }
-            }
-
-        } catch (SQLException e) {
-            System.err.println("Ошибка получения топ URL: " + e.getMessage());
-            e.printStackTrace();
-        }
-
-        return result;
-    }
-
-    public List<Map<String, Object>> getTopUsers(int limit) {
-        List<Map<String, Object>> result = new ArrayList<>();
-
-        String sql = "SELECT username, " +
-                "ip, " +  // <-- ДОБАВЛЕНО: берем IP пользователя
-                "COUNT(*) as count, " +
-                "MIN(time) as first_seen, " +
-                "MAX(time) as last_seen " +
-                "FROM logs " +
-                "WHERE username IS NOT NULL AND username != '' AND username != '-' " +
-                "GROUP BY username, ip " +  // <-- ИЗМЕНЕНО: группируем по username и ip
-                "ORDER BY count DESC " +
-                "LIMIT ?";
-
-        try (Connection conn = DriverManager.getConnection(DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD);
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setInt(1, limit);
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    Map<String, Object> item = new HashMap<>();
-                    item.put("username", rs.getString("username"));
-                    item.put("ip", rs.getString("ip"));
-                    item.put("count", rs.getInt("count"));
-                    item.put("first_seen", rs.getTimestamp("first_seen"));
-                    item.put("last_seen", rs.getTimestamp("last_seen"));
-                    result.add(item);
-                }
-            }
-
-        } catch (SQLException e) {
-            System.err.println("Ошибка получения топ пользователей: " + e.getMessage());
-            e.printStackTrace();
-        }
-
-        return result;
-    }
-
     public List<Integer> getAvailableStatuses() {
         List<Integer> statuses = new ArrayList<>();
 
-        try (Connection conn = DriverManager.getConnection(DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD)) {
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
             // Пробуем получить из таблицы статусов
             boolean hasStatusesTable = false;
             try (Statement stmt = conn.createStatement();
@@ -324,7 +255,7 @@ public class LogDataRepository {
     public List<String> getAvailableActions() {
         List<String> actions = new ArrayList<>();
 
-        try (Connection conn = DriverManager.getConnection(DatabaseConfig.DB_URL, DatabaseConfig.DB_USERNAME, DatabaseConfig.DB_PASSWORD)) {
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USERNAME, DB_PASSWORD)) {
             // Пробуем получить из таблицы actions
             boolean hasActionsTable = false;
             try (Statement stmt = conn.createStatement();

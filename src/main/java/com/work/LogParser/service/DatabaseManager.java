@@ -9,6 +9,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.function.Consumer;
 
+import static com.work.LogParser.config.DatabaseConfig.*;
+
 @Service
 public class DatabaseManager {
 
@@ -147,9 +149,9 @@ public class DatabaseManager {
         // Создаем конкурентные индексы в фоне с поддержкой отмены
         Thread backgroundIndexing = new Thread(() -> {
             try (Connection bgConn = DriverManager.getConnection(
-                    DatabaseConfig.DB_URL,
-                    DatabaseConfig.DB_USERNAME,
-                    DatabaseConfig.DB_PASSWORD)) {
+                    DB_URL,
+                    DB_USERNAME,
+                    DB_PASSWORD)) {
 
                 bgConn.setAutoCommit(true);
 
@@ -523,9 +525,7 @@ public class DatabaseManager {
         }
     }
 
-    /**
-     * Восстановление нормальных настроек после COPY (исправленная версия)
-     */
+    // Восстановление нормальных настроек после COPY
     public void restoreConnectionSettings(Connection conn) throws SQLException {
         try (Statement stmt = conn.createStatement()) {
             System.out.println("Восстановление настроек соединения...");

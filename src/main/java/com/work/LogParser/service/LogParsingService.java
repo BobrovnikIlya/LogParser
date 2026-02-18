@@ -16,6 +16,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+import static com.work.LogParser.config.DatabaseConfig.*;
+
 @Service
 public class LogParsingService {
     @Autowired
@@ -307,9 +309,7 @@ public class LogParsingService {
         return totalRemaining;
     }
 
-    /**
-     * Расчет оставшегося времени текущего этапа
-     */
+    // Расчет оставшегося времени текущего этапа
     private Map<String, Object> calculateCurrentStageRemaining(ParsingStatus status) {
         Map<String, Object> result = new HashMap<>();
         long remainingSeconds = -1;
@@ -415,264 +415,7 @@ public class LogParsingService {
         return result;
     }
 
-    /**
-     * Расчет статуса для этапа парсинга
-     */
-    private void calculateParsingStageStatus(Map<String, Object> status, long now, long elapsed) {
-        status.put("stageType", "parsing");
-
-        if (currentStatus.total > 0 && currentStatus.processed > 0) {
-            // Обновляем скорость каждые 2 секунды
-            if (now - currentStatus.lastProgressUpdateTime > 2000) {
-                long processedDelta = currentStatus.processed - currentStatus.lastProcessedCount;
-                long timeDelta = now - currentStatus.lastProgressUpdateTime;
-
-                if (timeDelta > 0 && processedDelta > 0) {
-                    double instantSpeed = (processedDelta * 1000.0) / timeDelta;
-                    // Сглаживание
-                    if (currentStatus.parsingSpeed == 0) {
-                        currentStatus.parsingSpeed = instantSpeed;
-                    } else {
-                        currentStatus.parsingSpeed = currentStatus.parsingSpeed * 0.7 + instantSpeed * 0.3;
-                    }
-                }
-
-                currentStatus.lastProgressUpdateTime = now;
-                currentStatus.lastProcessedCount = currentStatus.processed;
-            }
-
-            // Используем сохраненную скорость или вычисляем среднюю
-            double speed = currentStatus.parsingSpeed;
-            if (speed <= 0) {
-                long elapsedParsing = now - currentStatus.parsingStageStartTime;
-                if (elapsedParsing > 0) {
-                    speed = (currentStatus.processed * 1000.0) / elapsedParsing;
-                }
-            }
-
-            // Расчет оставшегося времени
-            if (speed > 0) {
-                long remainingLines = currentStatus.total - currentStatus.processed;
-                long remainingSeconds = (long) (remainingLines / speed);
-
-                status.put("remaining", formatRemainingTime(remainingSeconds * 1000));
-                status.put("remainingSeconds", remainingSeconds);
-                status.put("processingSpeed", String.format("%.0f", speed) + " строк/сек");
-                status.put("processingSpeedValue", speed);
-            } else {
-                status.put("remaining", "расчет...");
-                status.put("remainingSeconds", -1);
-            }
-
-            // Прогресс этапа
-            status.put("stageProgress", currentStatus.stageProgress);
-            status.put("stageProgressValue", currentStatus.stageProgress / 100.0);
-
-            // Общий прогресс
-            status.put("progress", currentStatus.progress);
-        } else {
-            status.put("remaining", "подготовка...");
-            status.put("remainingSeconds", -1);
-        }
-    }
-
-    /**
-     * Расчет статуса для этапа финализации
-     */
-    private void calculateFinalizationStageStatus(Map<String, Object> status, long now, long elapsed) {
-        status.put("stageType", "finalization");
-
-        // Время, затраченное на предыдущие этапы (ИСПОЛЬЗУЕМ ФАКТИЧЕСКОЕ ВРЕМЯ)
-        long previousTimeSpent = 0;
-
-        if (currentStatus.parsingCompleted) {
-            previousTimeSpent += currentStatus.actualParsingTime;
-        } else {
-            // Если парсинг еще не завершен (аварийная ситуация), используем оценку
-            previousTimeSpent += currentStatus.parsingDuration > 0 ?
-                    currentStatus.parsingDuration : (elapsed - currentStatus.parsingStageStartTime);
-        }
-
-        // Время, затраченное на текущий этап
-        long stageElapsed = currentStatus.stageStartTime > 0 ?
-                now - currentStatus.stageStartTime : elapsed - previousTimeSpent;
-
-        status.put("stageElapsed", stageElapsed / 1000);
-
-        // Прогресс этапа
-        int stageProgress = (int) currentStatus.stageProgress;
-        status.put("stageProgress", stageProgress);
-        status.put("stageProgressValue", stageProgress / 100.0);
-
-        // Расчет оставшегося времени
-        if (stageProgress < 100 && stageProgress > 0) {
-            long remainingTime = calculateRemainingTimeForStage(
-                    stageElapsed,
-                    stageProgress,
-                    currentStatus.estimatedFinalizationTime
-            );
-
-            status.put("remaining", formatRemainingTime(remainingTime));
-            status.put("remainingSeconds", remainingTime / 1000);
-
-            // Расчет скорости выполнения этапа
-            if (stageElapsed > 0 && stageProgress > 0) {
-                double stageSpeed = stageProgress / (stageElapsed / 1000.0);
-                status.put("stageSpeed", String.format("%.1f", stageSpeed) + "%/сек");
-            }
-        } else {
-            status.put("remaining", "финализация...");
-            status.put("remainingSeconds", -1);
-        }
-
-        // Общий прогресс
-        status.put("progress", currentStatus.progress);
-    }
-
-    /**
-     * Расчет статуса для этапа индексации
-     */
-    private void calculateIndexingStageStatus(Map<String, Object> status, long now, long elapsed) {
-        status.put("stageType", "indexing");
-
-        // Время, затраченное на предыдущие этапы (ТОЛЬКО ФАКТИЧЕСКОЕ ВРЕМЯ)
-        long previousTimeSpent = 0;
-
-        // Парсинг - всегда должно быть фактическое время
-        if (currentStatus.parsingCompleted) {
-            previousTimeSpent += currentStatus.actualParsingTime;
-        } else {
-            previousTimeSpent += currentStatus.parsingDuration;
-        }
-
-        // Финализация - используем фактическое время, если завершена
-        if (currentStatus.finalizationCompleted) {
-            previousTimeSpent += currentStatus.actualFinalizationTime;
-        } else {
-            // Если финализация не завершена (аварийная ситуация), используем оценку
-            previousTimeSpent += currentStatus.estimatedFinalizationTime;
-        }
-
-        // Время, затраченное на текущий этап
-        long stageElapsed = currentStatus.stageStartTime > 0 ?
-                now - currentStatus.stageStartTime : Math.max(0, elapsed - previousTimeSpent);
-
-        status.put("stageElapsed", stageElapsed / 1000);
-
-        // Прогресс этапа
-        int stageProgress = (int) currentStatus.stageProgress;
-        status.put("stageProgress", stageProgress);
-        status.put("stageProgressValue", stageProgress / 100.0);
-
-        // Информация о созданных индексах
-        status.put("indexesCreated", currentStatus.indexesCreated);
-        status.put("totalIndexes", currentStatus.totalIndexes);
-
-        // Расчет оставшегося времени
-        if (stageProgress < 100 && stageProgress > 0) {
-            long remainingTime = calculateRemainingTimeForStage(
-                    stageElapsed,
-                    stageProgress,
-                    currentStatus.estimatedIndexingTime
-            );
-
-            status.put("remaining", formatRemainingTime(remainingTime));
-            status.put("remainingSeconds", remainingTime / 1000);
-        } else {
-            status.put("remaining", "индексация...");
-            status.put("remainingSeconds", -1);
-        }
-
-        // Общий прогресс
-        status.put("progress", currentStatus.progress);
-    }
-
-    /**
-     * Расчет статуса для этапа статистики
-     */
-    private void calculateStatisticsStageStatus(Map<String, Object> status, long now, long elapsed) {
-        status.put("stageType", "statistics");
-
-        // Время, затраченное на предыдущие этапы (ТОЛЬКО ФАКТИЧЕСКОЕ ВРЕМЯ)
-        long previousTimeSpent = 0;
-
-        // Парсинг - фактическое время
-        if (currentStatus.parsingCompleted) {
-            previousTimeSpent += currentStatus.actualParsingTime;
-        } else {
-            previousTimeSpent += currentStatus.parsingDuration;
-        }
-
-        // Финализация - фактическое время, если завершена
-        if (currentStatus.finalizationCompleted) {
-            previousTimeSpent += currentStatus.actualFinalizationTime;
-        } else {
-            previousTimeSpent += currentStatus.estimatedFinalizationTime;
-        }
-
-        // Индексация - фактическое время, если завершена
-        if (currentStatus.indexingCompleted) {
-            previousTimeSpent += currentStatus.actualIndexingTime;
-        } else {
-            previousTimeSpent += currentStatus.estimatedIndexingTime;
-        }
-
-        // Время, затраченное на текущий этап
-        long stageElapsed = currentStatus.stageStartTime > 0 ?
-                now - currentStatus.stageStartTime : Math.max(0, elapsed - previousTimeSpent);
-
-        status.put("stageElapsed", stageElapsed / 1000);
-
-        // Прогресс этапа
-        int stageProgress = (int) currentStatus.stageProgress;
-        status.put("stageProgress", stageProgress);
-        status.put("stageProgressValue", stageProgress / 100.0);
-
-        // Расчет оставшегося времени
-        if (stageProgress < 100 && stageProgress > 0) {
-            long remainingTime = calculateRemainingTimeForStage(
-                    stageElapsed,
-                    stageProgress,
-                    currentStatus.estimatedStatisticsTime
-            );
-
-            status.put("remaining", formatRemainingTime(remainingTime));
-            status.put("remainingSeconds", remainingTime / 1000);
-        } else {
-            status.put("remaining", "обновление статистики...");
-            status.put("remainingSeconds", -1);
-        }
-
-        // Общий прогресс
-        status.put("progress", currentStatus.progress);
-    }
-
-    /**
-     * Расчет оставшегося времени для этапа с адаптивной коррекцией
-     */
-    private long calculateRemainingTimeForStage(long stageElapsed,
-                                                int stageProgress,
-                                                long estimatedTime) {
-        if (stageProgress <= 0) return estimatedTime;
-        if (stageProgress >= 100) return 0;
-
-        long remainingByEstimate = (long)(estimatedTime * (100 - stageProgress) / 100.0);
-
-        if (stageElapsed > 5000 && stageProgress > 5) {
-            double progressPerMs = stageProgress / (double)stageElapsed;
-            long remainingByActual = (long)((100 - stageProgress) / progressPerMs);
-
-            double actualWeight = Math.min(0.9, stageProgress / 100.0);
-            return (long)(remainingByActual * actualWeight +
-                    remainingByEstimate * (1 - actualWeight));
-        }
-
-        return remainingByEstimate;
-    }
-
-    /**
-     * Форматирование оставшегося времени в человекочитаемый формат
-     */
+    // Форматирование оставшегося времени в человекочитаемый формат
     private String formatRemainingTime(long milliseconds) {
         if (milliseconds <= 0) {
             return "менее секунды";
@@ -766,36 +509,12 @@ public class LogParsingService {
         }, areFiltersEmpty);
     }
 
-    public void updatePrecalculatedTops() {
-        precalculatedTopService.updatePrecalculatedTops();
-    }
-
     public boolean hasDataInDatabase() {
         return logDataRepository.hasDataInDatabase();
     }
 
     public long getLogCount() {
         return logDataRepository.getLogCount();
-    }
-
-    public List<Map<String, Object>> getTopUrls(int limit) {
-        // Ограничиваем максимальный лимит 100
-        int actualLimit = Math.min(limit, 100);
-        return getTopUrlsWithFilters(actualLimit, null, null, null, null, null, null);
-    }
-
-    public List<Map<String, Object>> getTopUsers(int limit) {
-        // Ограничиваем максимальный лимит 10
-        int actualLimit = Math.min(limit, 10);
-        return getTopUsersWithFilters(actualLimit, null, null, null, null, null, null);
-    }
-
-    public List<Integer> getAvailableStatuses() {
-        return logDataRepository.getAvailableStatuses();
-    }
-
-    public List<String> getAvailableActions() {
-        return logDataRepository.getAvailableActions();
     }
 
     public boolean cancelParsing() {
@@ -822,9 +541,9 @@ public class LogParsingService {
         // 3. Прерываем активные соединения с БД
         new Thread(() -> {
             try (Connection cancelConn = DriverManager.getConnection(
-                    DatabaseConfig.DB_URL,
-                    DatabaseConfig.DB_USERNAME,
-                    DatabaseConfig.DB_PASSWORD)) {
+                    DB_URL,
+                    DB_USERNAME,
+                    DB_PASSWORD)) {
 
                 // Находим и прерываем наш бэкенд процесс
                 String findPidSql = "SELECT pid FROM pg_stat_activity " +
@@ -833,7 +552,7 @@ public class LogParsingService {
                         "ORDER BY backend_start DESC LIMIT 1";
 
                 try (PreparedStatement ps = cancelConn.prepareStatement(findPidSql)) {
-                    ps.setString(1, DatabaseConfig.DB_USERNAME);
+                    ps.setString(1, DB_USERNAME);
                     try (ResultSet rs = ps.executeQuery()) {
                         if (rs.next()) {
                             int pid = rs.getInt("pid");

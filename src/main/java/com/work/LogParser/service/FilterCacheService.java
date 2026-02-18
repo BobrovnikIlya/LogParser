@@ -36,10 +36,6 @@ public class FilterCacheService {
             return data;
         }
 
-        public long getTimestamp() {
-            return timestamp;
-        }
-
         public boolean isExpired(long ttlMillis) {
             return System.currentTimeMillis() - timestamp > ttlMillis;
         }
@@ -54,9 +50,7 @@ public class FilterCacheService {
         this.cacheManager = cacheManager;
     }
 
-    /**
-     * Получение данных с кэшированием с разделением по типам фильтров
-     */
+    //Получение данных с кэшированием с разделением по типам фильтров
     public Map<String, Object> getCachedFilterResults(String cacheKey,
                                                       Supplier<Map<String, Object>> dataLoader,
                                                       String... filters) {
@@ -72,9 +66,7 @@ public class FilterCacheService {
         return getFromCacheOrLoad("filteredResults", cacheKey, dataLoader, CACHE_TTL_MS);
     }
 
-    /**
-     * Получение топ URL с кэшированием
-     */
+    // Получение топ URL с кэшированием
     public List<Map<String, Object>> getCachedTopUrls(String cacheKey,
                                                       Supplier<List<Map<String, Object>>> dataLoader,
                                                       boolean areFiltersEmpty) {
@@ -88,9 +80,7 @@ public class FilterCacheService {
         return getFromCacheOrLoad("topUrls", cacheKey, dataLoader, CACHE_TTL_MS);
     }
 
-    /**
-     * Получение топ пользователей с кэшированием
-     */
+    // Получение топ пользователей с кэшированием
     public List<Map<String, Object>> getCachedTopUsers(String cacheKey,
                                                        Supplier<List<Map<String, Object>>> dataLoader,
                                                        boolean areFiltersEmpty) {
@@ -104,9 +94,7 @@ public class FilterCacheService {
         return getFromCacheOrLoad("topUsers", cacheKey, dataLoader, CACHE_TTL_MS);
     }
 
-    /**
-     * Универсальный метод получения из кэша или загрузки
-     */
+    // Универсальный метод получения из кэша или загрузки
     @SuppressWarnings("unchecked")
     private <T> T getFromCacheOrLoad(String cacheName, String cacheKey,
                                      Supplier<T> dataLoader, long ttlMs) {
@@ -152,9 +140,7 @@ public class FilterCacheService {
         return data;
     }
 
-    /**
-     * Генерация ключа кэша
-     */
+    // Генерация ключа кэша
     public String generateCacheKey(String dateFrom, String dateTo, String ip,
                                    String username, String status, String action) {
         // Нормализуем значения для ключа
@@ -171,9 +157,7 @@ public class FilterCacheService {
                 normalizedStatus, normalizedAction);
     }
 
-    /**
-     * Генерация ключа для топов
-     */
+    // Генерация ключа для топов
     public String generateTopCacheKey(String dateFrom, String dateTo, String ip,
                                       String username, String status, String action,
                                       String type, int limit) {
@@ -181,9 +165,7 @@ public class FilterCacheService {
         return String.format("top:%s:%s:%d", type, filterKey, limit);
     }
 
-    /**
-     * Проверка на пустые фильтры
-     */
+    // Проверка на пустые фильтры
     public boolean areFiltersEmpty(String dateFrom, String dateTo, String ip,
                                    String username, String status, String action) {
         return (dateFrom == null || dateFrom.trim().isEmpty()) &&
@@ -194,9 +176,7 @@ public class FilterCacheService {
                 (action == null || action.trim().isEmpty());
     }
 
-    /**
-     * Проверка на пустые фильтры по ключу кэша
-     */
+    // Проверка на пустые фильтры по ключу кэша
     private boolean areFiltersEmpty(String cacheKey) {
         // Если ключ содержит только пустые значения после "filter:"
         if (cacheKey.startsWith("filter:")) {
@@ -213,9 +193,7 @@ public class FilterCacheService {
         return false;
     }
 
-    /**
-     * Нормализация даты для ключа
-     */
+    // Нормализация даты для ключа
     private String normalizeDate(String date) {
         if (date == null || date.trim().isEmpty()) {
             return "";
@@ -231,9 +209,7 @@ public class FilterCacheService {
         return trimmed;
     }
 
-    /**
-     * Очистка кэша по ключу
-     */
+    // Очистка кэша по ключу
     @Caching(evict = {
             @CacheEvict(value = "filteredResults", key = "#cacheKey"),
             @CacheEvict(value = "topUrls", key = "#cacheKey + ':top:urls:*'"),
@@ -244,9 +220,7 @@ public class FilterCacheService {
         System.out.println("🗑️ Кэш очищен для ключа: " + cacheKey);
     }
 
-    /**
-     * Очистка всего кэша
-     */
+    // Очистка всего кэша
     @Caching(evict = {
             @CacheEvict(value = "filteredResults", allEntries = true),
             @CacheEvict(value = "topUrls", allEntries = true),
@@ -257,9 +231,7 @@ public class FilterCacheService {
         System.out.println("🗑️ Весь кэш очищен");
     }
 
-    /**
-     * Периодическая очистка просроченного кэша
-     */
+    // Периодическая очистка просроченного кэша
     @Scheduled(fixedDelay = 60000) // Каждую минуту
     public void cleanupExpiredCache() {
         int removed = 0;
@@ -283,9 +255,7 @@ public class FilterCacheService {
         }
     }
 
-    /**
-     * Метод для принудительного обновления кэша при изменении данных
-     */
+    //Метод для принудительного обновления кэша при изменении данных
     public void invalidateCacheAfterDataChange() {
         // Очищаем только кэш фильтрованных данных, дефолтные данные остаются
         for (var entry : memoryCache.entrySet()) {
