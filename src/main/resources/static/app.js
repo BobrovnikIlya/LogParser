@@ -1974,53 +1974,112 @@ document.addEventListener('keydown', function(event) {
     }
 });
 
-// Функция экспорта топ данных
+// Функция экспорта данных из модальных окон в CSV
 function exportTopData(type) {
-    let data, filename, headers, rows;
-    
+    // Определяем, какое модальное окно активно
+    const modalId = type === 'urls' ? 'topUrlsModal' : 'topUsersModal';
+    const modal = document.getElementById(modalId);
+
+    // Проверяем, открыто ли модальное окно
+    if (!modal || modal.style.display !== 'block') {
+        showNotification('Сначала откройте соответствующий топ', true);
+        return;
+    }
+
+    // Получаем данные из таблицы модального окна
+    const tbodyId = type === 'urls' ? 'topUrlsBody' : 'topUsersBody';
+    const tbody = document.getElementById(tbodyId);
+
+    if (!tbody || tbody.children.length === 0) {
+        showNotification('Нет данных для экспорта', true);
+        return;
+    }
+
     // Получаем текущие фильтры для имени файла
     const filters = getFiltersForTops();
-    const hasFilters = Object.values(filters).some(value => 
+    const hasFilters = Object.values(filters).some(value =>
         value && value.toString().trim() !== ''
     );
-    
-    if (type === 'urls') {
-        const rowsElements = document.querySelectorAll('#topUrlsBody tr');
-        data = Array.from(rowsElements).map(row => ({
-            rank: row.cells[0].textContent,
-            url: row.cells[1].title || row.cells[1].textContent,
-            domain: row.cells[2].textContent,
-            count: row.cells[3].textContent,
-            avg_response_time: row.cells[4].textContent,
-            total_traffic: row.cells[5].textContent
-        }));
-        
-        filename = hasFilters ? 
-            `top_urls_filtered_${Date.now()}.csv` : 
-            'top_urls.csv';
-            
-        headers = ['Ранг', 'URL', 'Домен', 'Количество запросов', 'Среднее время ответа', 'Общий трафик'];
+
+    // Формируем имя файла
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+    const filename = hasFilters
+        ? `${type}_top_filtered_${timestamp}.csv`
+        : `${type}_top_${timestamp}.csv`;
+
+    // Собираем данные из таблицы
+    const rows = [];
+    const headers = [];
+
+    // Получаем заголовки из thead
+    const thead = modal.querySelector('thead');
+    if (thead && thead.rows[0]) {
+        for (let cell of thead.rows[0].cells) {
+            headers.push(cell.textContent.trim());
+        }
     } else {
-        const rowsElements = document.querySelectorAll('#topUsersBody tr');
-        data = Array.from(rowsElements).map(row => ({
-            rank: row.cells[0].textContent,
-            username: row.cells[1].textContent,
-            count: row.cells[2].textContent,
-            ip: row.cells[3].textContent,
-            first_seen: row.cells[4].textContent,
-            last_seen: row.cells[5].textContent,
-            avg_response_time: row.cells[6].textContent,
-            total_traffic: row.cells[7].textContent
-        }));
-        
-        filename = hasFilters ? 
-            `top_users_filtered_${Date.now()}.csv` : 
-            'top_users.csv';
-            
-        headers = ['Ранг', 'Пользователь', 'Количество запросов', 'IP', 'Первый запрос', 'Последний запрос', 'Среднее время ответа', 'Общий трафик'];
+        // Заголовки по умолчанию, если не удалось получить из таблицы
+        if (type === 'urls') {
+            headers.push('Ранг', 'URL', 'Домен', 'Запросы', 'Ср. время', 'Трафик');
+        } else {
+            headers.push('Ранг', 'Пользователь', 'Запросы', 'IP', 'Первый запрос', 'Последний запрос', 'Ср. время', 'Трафик');
+        }
     }
-    
-    // ... существующий код формирования CSV ...
+
+    // Собираем данные из строк
+    for (let row of tbody.children) {
+        const rowData = [];
+        for (let cell of row.cells) {
+            // Для URL используем title если есть (полный URL), иначе текст
+            if (type === 'urls' && cell === row.cells[1] && cell.title) {
+                rowData.push(cell.title);
+            } else {
+                rowData.push(cell.textContent.trim());
+            }
+        }
+        rows.push(rowData);
+    }
+
+    // Формируем CSV
+    const csvContent = generateCSV(headers, rows);
+
+    // Скачиваем файл
+    downloadCSV(csvContent, filename);
+
+    showNotification(`Топ ${type === 'urls' ? 'URL' : 'пользователей'} экспортирован`, false);
+}
+
+// Вспомогательная функция для генерации CSV
+function generateCSV(headers, rows) {
+    const escapeCSV = (str) => {
+        if (str === null || str === undefined) return '';
+        const stringified = String(str);
+        if (stringified.includes(',') || stringified.includes('"') || stringified.includes('\n')) {
+            return '"' + stringified.replace(/"/g, '""') + '"';
+        }
+        return stringified;
+    };
+
+    const headerLine = headers.map(escapeCSV).join(',');
+    const dataLines = rows.map(row => row.map(escapeCSV).join(','));
+
+    return [headerLine, ...dataLines].join('\n');
+}
+
+// Вспомогательная функция для скачивания CSV
+function downloadCSV(content, filename) {
+    const blob = new Blob(['\uFEFF' + content], { type: 'text/csv;charset=utf-8;' }); // Добавляем BOM для UTF-8
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 }
 
 // Сортировка таблицы (простая по клику заголовка)
@@ -2771,6 +2830,10 @@ window.resetParsingProgress = resetParsingProgress;
 
 window.cancelCurrentRequest = cancelCurrentRequest;
 window.initializeApp = initializeAppWithStatus;
+
+window.exportTopData = exportTopData;
+window.openModal = openModal;
+window.closeModal = closeModal;
 
 // Event listeners
 document.addEventListener('DOMContentLoaded', initializeApp);
