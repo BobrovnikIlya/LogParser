@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # PostgreSQL база данных
+  postgres:
+    image: postgres:15-alpine
+    container_name: logparser-postgres
+    environment:
+      POSTGRES_DB: ParserLog
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-uthgb123}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - logparser-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ParserLog"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c effective_cache_size=768MB
+      -c maintenance_work_mem=64MB
+      -c max_connections=20
+
+  # Java приложение
+  app:
+    build: .
+    container_name: logparser-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/ParserLog
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-uthgb123}
+      SPRING_JPA_ENABLED: "false"
+      SPRING_DATA_JPA_REPOSITORIES_ENABLED: "false"
+      SERVER_PORT: 8080
+      LOGGING_LEVEL_COM_WORK: DEBUG
+    volumes:
+      # Создайте папку ./logs на вашем компьютере и положите туда файлы логов
+      - ./logs:/app/logs:ro
+    networks:
+      - logparser-network
+    restart: unless-stopped
+
+  # Adminer для управления БД (опционально)
+  adminer:
+    image: adminer:latest
+    container_name: logparser-adminer
+    ports:
+      - "8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    networks:
+      - logparser-network
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: logparser_postgres_data
+
+networks:
+  logparser-network:
+    name: logparser-network
+    driver: bridge
