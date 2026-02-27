@@ -1,7 +1,13 @@
+# Добавьте в начало файла:
+ARG BUILDPLATFORM=linux/amd64
+
+# Используйте для явного указания платформы сборки:
+FROM --platform=$BUILDPLATFORM maven:3.9.6-eclipse-temurin-17 AS builder
+
 # ---- Этап 1: Сборка приложения ----
 FROM maven:3.9.6-eclipse-temurin-17 AS builder
 
-# Настройки для Windows
+# Настройки для Windows/Mac/Linux
 ENV MAVEN_OPTS="-Dfile.encoding=UTF-8"
 
 WORKDIR /app
@@ -13,24 +19,29 @@ RUN mvn dependency:go-offline -B
 # Копируем исходный код
 COPY src ./src
 
-# Собираем приложение, полностью отключая тестовый модуль
+# Собираем приложение
 RUN mvn clean package -DskipTests -Dmaven.test.skip=true -Dfile.encoding=UTF-8
 
 # ---- Этап 2: Запуск ----
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:17-jre
 
 ENV JAVA_OPTS="-Dfile.encoding=UTF-8"
 
-RUN apk add --no-cache tzdata
+# Установка tzdata через apt
+RUN apt-get update && apt-get install -y tzdata && rm -rf /var/lib/apt/lists/*
 
-RUN addgroup -S spring && adduser -S spring -G spring
+# Создание пользователя и группы (для Debian)
+RUN groupadd -r spring && useradd -r -g spring spring
+
+# Создаем пользователя и директорию для логов
+RUN mkdir -p /app/logs && \
+    chown -R spring:spring /app/logs
+
 USER spring:spring
 
 WORKDIR /app
 
 COPY --from=builder /app/target/*.jar app.jar
-
-RUN mkdir -p /app/logs
 
 EXPOSE 8080
 
