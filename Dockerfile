@@ -1,10 +1,10 @@
-# Добавьте в начало файла:
-ARG BUILDPLATFORM=linux/amd64
-
-# Используйте для явного указания платформы сборки:
-FROM --platform=$BUILDPLATFORM maven:3.9.6-eclipse-temurin-17 AS builder
-
 # ---- Этап 1: Сборка приложения ----
+    # Добавьте в начало файла:
+    ARG BUILDPLATFORM=linux/amd64
+
+    # Используйте для явного указания платформы сборки:
+    FROM --platform=$BUILDPLATFORM maven:3.9.6-eclipse-temurin-17 AS builder
+
 FROM maven:3.9.6-eclipse-temurin-17 AS builder
 
 # Настройки для Windows/Mac/Linux
